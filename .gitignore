@@ -1,0 +1,40 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# JavaScript
+node_modules/
+dist/
+.vite/
+coverage/
+
+# PHP / Laravel
+vendor/
+bootstrap/cache/*.php
+storage/framework/cache/
+storage/framework/sessions/
+storage/framework/testing/
+storage/framework/views/
+storage/logs/
+.phpunit.result.cache
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
+# Local runtime data
+tmp/
+logs/
+
