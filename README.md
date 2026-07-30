@@ -1,33 +1,53 @@
 # Support Copilot
 
-A production-oriented, multi-tenant RAG assistant for customer support teams.
+A production-oriented, citation-aware AI support assistant built as a public
+portfolio project.
 
-## Overview
+## Product overview
 
-Support Copilot is designed to answer product and policy questions from a
-company knowledge base, provide verifiable source citations, and hand uncertain
-cases to a human support agent.
+Support Copilot turns uploaded product and policy documents into a temporary
+support workspace. A visitor can review the source PDF beside the conversation,
+ask questions, and inspect the exact passages used to produce each answer.
+
+The project is designed to demonstrate more than a basic LLM integration:
+document ingestion, grounded retrieval, verifiable citations, safe fallback,
+quota controls, asynchronous processing, and operational visibility are all
+part of the product boundary.
 
 ## Planned capabilities
 
-- Multi-tenant knowledge bases
-- PDF, Markdown, and text document ingestion
-- Grounded answers with validated citations
-- Streaming conversations
-- Insufficient-evidence fallback
-- Human follow-up workflow
-- Feedback, usage, latency, and cost visibility
+- Public, no-sign-up PDF workspace
+- Processed document preview with highlighted answer references
+- Grounded, streaming answers with validated citations
+- Honest fallback when the knowledge base lacks sufficient evidence
+- Global public demo quota and higher-quota access passes
+- Temporary workspace lifecycle and administrator cleanup
+- Feedback, usage, latency, and estimated cost reporting
 - Retrieval and answer-quality evaluation
 
-## Planned technology
+## Architecture
 
-- React and TypeScript
-- Laravel
-- Python and FastAPI
-- LangGraph
-- PostgreSQL and pgvector
-- Redis
-- OpenAI with a provider abstraction
+The browser communicates with a Laravel business API. Laravel owns workspace
+lifecycle, authorization, quota enforcement, storage, queues, and application
+records. A private FastAPI service owns document processing and the AI
+workflow. PostgreSQL stores application data and vector embeddings, while
+Redis supports queues and short-lived state.
+
+## Technology baseline
+
+- React 19.2, TypeScript 6, and Vite 8.2
+- PHP 8.5 and Laravel 13
+- Python 3.13 and FastAPI
+- PostgreSQL 18 with pgvector 0.8.2
+- Redis 8.4
+- Nginx and Docker Compose
+- OpenAI behind an application-level provider boundary
+
+## Project status
+
+The repository foundation, service boundaries, health checks, code-quality
+tooling, container topology, and continuous integration are in place. Product
+features are being delivered incrementally.
 
 ## Live demo
 

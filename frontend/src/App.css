@@ -1,0 +1,117 @@
+.foundation {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.foundation__card {
+  width: min(760px, 100%);
+  padding: clamp(32px, 7vw, 72px);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgb(44 231 183 / 10%),
+      transparent 34%
+    ),
+    var(--surface);
+  box-shadow: 0 30px 80px rgb(0 0 0 / 28%);
+}
+
+.foundation__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--success);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.foundation__status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 5px rgb(44 231 183 / 12%);
+}
+
+.foundation__kicker {
+  margin: 40px 0 8px;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.foundation h1 {
+  margin: 0;
+  color: var(--heading);
+  font-size: clamp(2.6rem, 8vw, 5rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.foundation__summary {
+  max-width: 640px;
+  margin: 28px 0 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 2.4vw, 1.15rem);
+  line-height: 1.7;
+}
+
+.foundation__services {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin: 48px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--border);
+}
+
+.foundation__services div {
+  padding: 18px;
+  background: var(--surface-strong);
+}
+
+.foundation__services dt {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.foundation__services dd {
+  margin: 0;
+  color: var(--heading);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+@media (max-width: 640px) {
+  .foundation {
+    padding: 16px;
+  }
+
+  .foundation__card {
+    border-radius: 18px;
+  }
+
+  .foundation__services {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .foundation__status-dot {
+    animation: pulse 2.4s ease-out infinite;
+  }
+
+  @keyframes pulse {
+    50% {
+      box-shadow: 0 0 0 9px rgb(44 231 183 / 0%);
+    }
+  }
+}

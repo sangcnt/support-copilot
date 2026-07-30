@@ -1,0 +1,180 @@
+name: ${COMPOSE_PROJECT_NAME:-support-copilot}
+
+x-backend-environment: &backend-environment
+  APP_NAME: Support Copilot
+  APP_ENV: ${APP_ENV:-local}
+  APP_KEY: ${APP_KEY:-}
+  APP_DEBUG: ${APP_DEBUG:-true}
+  APP_URL: http://127.0.0.1:${APP_PORT:-5020}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_DATABASE: ${DB_DATABASE:-support_copilot}
+  DB_USERNAME: ${DB_USERNAME:-support_copilot}
+  DB_PASSWORD: ${DB_PASSWORD:-support_copilot}
+  CACHE_STORE: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: redis
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-null}
+  AI_SERVICE_URL: http://ai-service:8000
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: infrastructure/nginx/Dockerfile
+      args:
+        FRONTEND_PUBLIC_BASE: ${PUBLIC_BASE_PATH:-/demo/support-copilot/}
+    ports:
+      - "127.0.0.1:${APP_PORT:-5020}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - application
+
+  frontend:
+    image: node:24.18.0-alpine
+    profiles: ["tools"]
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    networks:
+      - application
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/php/Dockerfile
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php-fpm", "-t"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - backend_storage:/var/www/html/storage/app
+    restart: unless-stopped
+    networks:
+      - application
+
+  queue:
+    build:
+      context: .
+      dockerfile: infrastructure/php/Dockerfile
+    command: php artisan queue:work --sleep=1 --tries=3 --timeout=120
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend_storage:/var/www/html/storage/app
+    restart: unless-stopped
+    networks:
+      - application
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: infrastructure/ai-service/Dockerfile
+    environment:
+      AI_APP_ENVIRONMENT: ${AI_APP_ENVIRONMENT:-local}
+      AI_LOG_LEVEL: ${AI_LOG_LEVEL:-INFO}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - application
+
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg18
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-support_copilot}
+      POSTGRES_USER: ${DB_USERNAME:-support_copilot}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-support_copilot}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/001-pgvector.sql:ro
+    restart: unless-stopped
+    networks:
+      - application
+
+  redis:
+    image: redis:8.4.5-alpine
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server --appendonly yes
+        $${REDIS_PASSWORD:+--requirepass "$${REDIS_PASSWORD}"}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+            redis-cli -a "$${REDIS_PASSWORD}" ping;
+          else
+            redis-cli ping;
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - application
+
+networks:
+  application:
+    driver: bridge
+
+volumes:
+  backend_storage:
+  frontend_node_modules:
+  postgres_data:
+  redis_data:

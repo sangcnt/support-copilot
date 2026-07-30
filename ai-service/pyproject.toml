@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "support-copilot-ai"
+version = "0.1.0"
+description = "AI workflow service for Support Copilot."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic-settings==2.14.2",
+  "uvicorn[standard]==0.52.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
+  "ruff==0.16.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/support_copilot_ai"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config -p no:cacheprovider"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+cache-dir = "/tmp/support-copilot-ruff-cache"
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
