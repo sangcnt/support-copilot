@@ -3,70 +3,74 @@ import { describe, expect, it } from 'vitest'
 import App from './App'
 
 describe('App', () => {
-  it('opens directly in an empty public demo workspace', () => {
+  it('opens directly in an upload-first public workspace', () => {
     render(<App />)
 
     expect(
-      screen.getByRole('heading', { name: 'Northstar Support Handbook' }),
+      screen.getByRole('heading', { name: 'No PDF selected' }),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('region', { name: 'Support chat' }),
     ).toBeInTheDocument()
+    expect(screen.getByText('Citations will open here')).toBeInTheDocument()
     expect(
-      screen.getByLabelText('Answers use only this source document'),
-    ).toHaveTextContent('Uses this document')
-    expect(
-      screen.queryByText('Can I get a refund after trying the Pro plan?'),
+      screen.queryByText('Northstar Support Handbook'),
     ).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+    expect(screen.getByText('Upload a PDF to enable chat')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('textbox', { name: 'Ask about this document' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Send message' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Summarize this document' }),
+    ).not.toBeInTheDocument()
   })
 
-  it('submits a sample question without inventing a static answer', () => {
+  it('shows an honest placeholder error after choosing a PDF', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refund timing' }))
+    const file = new File(['test'], 'policy.pdf', {
+      type: 'application/pdf',
+    })
 
-    expect(
-      screen.getByText('How long does an approved refund take?'),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('Answer unavailable')
+    fireEvent.change(screen.getByLabelText('Choose a PDF'), {
+      target: { files: [file] },
+    })
+
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'The AI workflow is not connected yet.',
+      'policy.pdf was selected, but the upload pipeline is not connected yet.',
     )
-    expect(
-      screen.queryByText(
-        'Your bank may take 5–10 business days after approval to show the refund.',
-      ),
-    ).not.toBeInTheDocument()
   })
 
-  it('accepts a typed question and shows the current static error state', () => {
+  it('provides working admin navigation and empty product states', () => {
     render(<App />)
 
-    const input = screen.getByRole('textbox', {
-      name: 'Ask about this document',
-    })
-
-    fireEvent.change(input, {
-      target: { value: 'Does the policy cover annual plans?' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Admin preview' }))
 
     expect(
-      screen.getByText('Does the policy cover annual plans?'),
+      screen.getByRole('heading', { name: 'Documents', level: 1 }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toBeInTheDocument()
-    expect(input).toHaveValue('')
+    expect(screen.getByText('No documents yet')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversations' }))
+    expect(screen.getByText('No conversations yet')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Usage' }))
+    expect(screen.getByText('Estimated cost')).toBeInTheDocument()
+    expect(screen.getByText('$0.00')).toBeInTheDocument()
   })
 
-  it('does not expose document controls that are not implemented yet', () => {
+  it('switches between source and chat panels on mobile navigation', () => {
     render(<App />)
 
-    expect(
-      screen.queryByRole('button', { name: 'Start with your PDF' }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'More document options' }),
-    ).not.toBeInTheDocument()
+    const sourceTab = screen.getByRole('tab', { name: 'Source' })
+    const chatTab = screen.getByRole('tab', { name: 'Chat' })
+
+    expect(sourceTab).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(chatTab)
+    expect(chatTab).toHaveAttribute('aria-selected', 'true')
+    expect(sourceTab).toHaveAttribute('aria-selected', 'false')
   })
 })

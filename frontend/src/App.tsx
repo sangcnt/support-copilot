@@ -1,52 +1,14 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import './App.css'
 
+type AppView = 'demo' | 'admin'
 type MobilePanel = 'source' | 'chat'
+type AdminSection = 'documents' | 'conversations' | 'usage'
 
-type DemoQuestion = {
-  id: string
-  label: string
-  question: string
-}
-
-const sourceSections: Array<{
-  heading: string
-  body: string
-}> = [
-  {
-    heading: '4. Billing and refunds',
-    body: 'This policy applies to subscriptions purchased directly through Northstar Cloud.',
-  },
-  {
-    heading: '4.2 Refund eligibility',
-    body: 'Customers may request a full refund within 14 calendar days of the initial purchase when usage remains below 20% of the monthly plan allowance.',
-  },
-  {
-    heading: '4.3 Refund method',
-    body: 'Approved refunds are returned to the original payment method. Bank processing may take 5–10 business days after approval.',
-  },
-  {
-    heading: '4.4 Renewals',
-    body: 'Subscription renewals are not refundable after the renewal date unless required by applicable law.',
-  },
-]
-
-const demoQuestions: DemoQuestion[] = [
-  {
-    id: 'refund-eligibility',
-    label: 'Refund eligibility',
-    question: 'Can I get a refund after trying the Pro plan?',
-  },
-  {
-    id: 'refund-timing',
-    label: 'Refund timing',
-    question: 'How long does an approved refund take?',
-  },
-  {
-    id: 'renewal-policy',
-    label: 'Renewal policy',
-    question: 'Can I refund a subscription renewal?',
-  },
+const sampleQuestions = [
+  'Summarize this document',
+  'What are the key requirements?',
+  'What does it say about refunds?',
 ]
 
 function Brand() {
@@ -63,7 +25,98 @@ function Brand() {
   )
 }
 
+function AppHeader({
+  view,
+  onViewChange,
+}: {
+  view: AppView
+  onViewChange: (view: AppView) => void
+}) {
+  return (
+    <header className="workspace-topbar">
+      <Brand />
+      <span className="topbar-divider" aria-hidden="true" />
+      <span className="workspace-name">Interactive public demo</span>
+      <nav className="view-switcher" aria-label="Demo views">
+        <button
+          type="button"
+          aria-current={view === 'demo' ? 'page' : undefined}
+          onClick={() => onViewChange('demo')}
+        >
+          Public demo
+        </button>
+        <button
+          type="button"
+          aria-current={view === 'admin' ? 'page' : undefined}
+          onClick={() => onViewChange('admin')}
+        >
+          Admin preview
+        </button>
+      </nav>
+    </header>
+  )
+}
+
+function UploadPlaceholder({
+  compact = false,
+  onFileSelected,
+}: {
+  compact?: boolean
+  onFileSelected: (file: File) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selectFile = (files: FileList | null) => {
+    const file = files?.[0]
+
+    if (file) {
+      onFileSelected(file)
+    }
+  }
+
+  return (
+    <div
+      className={
+        compact
+          ? 'upload-placeholder upload-placeholder--compact'
+          : 'upload-placeholder'
+      }
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault()
+        selectFile(event.dataTransfer.files)
+      }}
+    >
+      <input
+        ref={inputRef}
+        className="visually-hidden"
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={(event) => selectFile(event.target.files)}
+        aria-label="Choose a PDF"
+      />
+      <span className="upload-placeholder__mark" aria-hidden="true">
+        ↑
+      </span>
+      <div>
+        <strong>{compact ? 'Upload a document' : 'Start with a PDF'}</strong>
+        <p>
+          {compact
+            ? 'Drop a PDF here or choose a file.'
+            : 'Upload a document, then ask questions and inspect every citation.'}
+        </p>
+      </div>
+      <button type="button" onClick={() => inputRef.current?.click()}>
+        Choose PDF
+      </button>
+      <small>PDF only · Maximum 10 MB</small>
+    </div>
+  )
+}
+
 function SourcePanel() {
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
   return (
     <section
       className="workspace-panel source-panel"
@@ -72,59 +125,46 @@ function SourcePanel() {
       <header className="panel-header">
         <div>
           <span className="panel-header__label">Source document</span>
-          <h2>Northstar Support Handbook</h2>
+          <h2>No PDF selected</h2>
         </div>
       </header>
 
-      <div className="document-meta">
-        <span className="file-mark" aria-hidden="true">
-          PDF
-        </span>
-        <div>
-          <strong>northstar-support.pdf</strong>
-          <span>Page 4 of 12 · 684 KB</span>
+      <div className="source-empty">
+        <UploadPlaceholder
+          onFileSelected={(file) => {
+            setUploadError(
+              `${file.name} was selected, but the upload pipeline is not connected yet.`,
+            )
+          }}
+        />
+
+        {uploadError && (
+          <div className="inline-error" role="alert">
+            <span aria-hidden="true">!</span>
+            <p>{uploadError}</p>
+          </div>
+        )}
+
+        <div className="citation-preview-note">
+          <span aria-hidden="true">01</span>
+          <div>
+            <strong>Citations will open here</strong>
+            <p>
+              On desktop, a citation will reveal and highlight its source in
+              this panel. On mobile, it will switch to the Source tab.
+            </p>
+          </div>
         </div>
-        <span className="ready-badge">Ready</span>
-      </div>
-
-      <div className="document-canvas">
-        <article className="document-page">
-          <header>
-            <span>NORTHSTAR CLOUD</span>
-            <span>SUPPORT HANDBOOK · 2026</span>
-          </header>
-          <p className="document-page__chapter">CUSTOMER POLICY</p>
-          <h3>Billing, refunds, and renewals</h3>
-          <p className="document-page__intro">
-            Guidelines for subscription purchases, refund eligibility, and
-            payment processing.
-          </p>
-
-          <div className="document-page__rule" />
-
-          {sourceSections.map((section) => (
-            <section key={section.heading} className="source-section">
-              <h4>{section.heading}</h4>
-              <p>{section.body}</p>
-            </section>
-          ))}
-
-          <footer>
-            <span>Internal support reference</span>
-            <span>04</span>
-          </footer>
-        </article>
       </div>
     </section>
   )
 }
 
-function ChatPanel() {
+function ChatPanel({ hasDocument }: { hasDocument: boolean }) {
   const [draft, setDraft] = useState('')
   const [submittedQuestion, setSubmittedQuestion] = useState<string | null>(
     null,
   )
-  const [error, setError] = useState<string | null>(null)
 
   const submitQuestion = (question: string) => {
     const normalizedQuestion = question.trim()
@@ -135,8 +175,34 @@ function ChatPanel() {
 
     setSubmittedQuestion(normalizedQuestion)
     setDraft('')
-    setError(
-      'Unable to generate an answer right now. The AI workflow is not connected yet.',
+  }
+
+  if (!hasDocument) {
+    return (
+      <section className="workspace-panel chat-panel" aria-label="Support chat">
+        <header className="panel-header chat-panel__header">
+          <div className="assistant-avatar" aria-hidden="true">
+            C
+            <span />
+          </div>
+          <div>
+            <span className="panel-header__label">Document assistant</span>
+            <h2>Ask your PDF</h2>
+          </div>
+          <span className="waiting-badge">No document</span>
+        </header>
+
+        <div className="chat-locked">
+          <span className="chat-locked__mark" aria-hidden="true">
+            ↑
+          </span>
+          <strong>Upload a PDF to enable chat</strong>
+          <p>
+            The question box will appear after the document has finished
+            processing.
+          </p>
+        </div>
+      </section>
     )
   }
 
@@ -148,17 +214,10 @@ function ChatPanel() {
           <span />
         </div>
         <div>
-          <span className="panel-header__label">Knowledge assistant</span>
-          <h2>Northstar Support</h2>
+          <span className="panel-header__label">Document assistant</span>
+          <h2>Ask your PDF</h2>
         </div>
-        <span
-          className="grounded-badge"
-          aria-label="Answers use only this source document"
-          title="Answers are limited to the source document"
-        >
-          <span aria-hidden="true">◆</span>
-          Uses this document
-        </span>
+        <span className="ready-badge">Document ready</span>
       </header>
 
       <div className="conversation" aria-live="polite">
@@ -171,13 +230,13 @@ function ChatPanel() {
           </div>
           <div className="message__content">
             <p>
-              Ask a question about the Northstar Support Handbook. Answers will
-              include citations to the supporting passages.
+              Upload a PDF to start. I’ll answer from that document and show the
+              supporting passages with every response.
             </p>
           </div>
         </article>
 
-        {submittedQuestion && error && (
+        {submittedQuestion && (
           <>
             <article className="message message--user">
               <div className="message__content">
@@ -187,8 +246,8 @@ function ChatPanel() {
             <div className="chat-error" role="alert">
               <span aria-hidden="true">!</span>
               <div>
-                <strong>Answer unavailable</strong>
-                <p>{error}</p>
+                <strong>Upload a PDF first</strong>
+                <p>A document is required before Support Copilot can answer.</p>
               </div>
             </div>
           </>
@@ -199,13 +258,13 @@ function ChatPanel() {
         <div className="prompt-suggestions" aria-label="Sample questions">
           <span>Try a sample question</span>
           <div>
-            {demoQuestions.map((question) => (
+            {sampleQuestions.map((question) => (
               <button
-                key={question.id}
+                key={question}
                 type="button"
-                onClick={() => submitQuestion(question.question)}
+                onClick={() => submitQuestion(question)}
               >
-                {question.label}
+                {question}
               </button>
             ))}
           </div>
@@ -220,17 +279,14 @@ function ChatPanel() {
           <textarea
             id="chat-draft"
             value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setError(null)
-            }}
+            onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 submitQuestion(draft)
               }
             }}
-            placeholder="Ask about this document…"
+            placeholder="Ask about your PDF…"
             rows={2}
           />
           <div className="chat-composer__footer">
@@ -247,23 +303,17 @@ function ChatPanel() {
             </button>
           </div>
         </form>
-        <p>Answers may be incomplete. Always verify important details.</p>
+        <p>Answers will be limited to the active document.</p>
       </div>
     </section>
   )
 }
 
-function WorkspaceScreen() {
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>('chat')
+function PublicDemo() {
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>('source')
 
   return (
-    <div className="workspace-shell">
-      <header className="workspace-topbar">
-        <Brand />
-        <span className="topbar-divider" aria-hidden="true" />
-        <span className="workspace-name">Interactive public demo</span>
-      </header>
-
+    <>
       <div
         className="mobile-panel-tabs"
         role="tablist"
@@ -308,15 +358,205 @@ function WorkspaceScreen() {
           role="tabpanel"
           aria-labelledby="chat-tab"
         >
-          <ChatPanel />
+          <ChatPanel hasDocument={false} />
         </div>
       </main>
+    </>
+  )
+}
+
+function AdminDocuments() {
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  return (
+    <div className="admin-page">
+      <header className="admin-page__header">
+        <div>
+          <p>Knowledge sources</p>
+          <h1>Documents</h1>
+        </div>
+        <span>0 documents</span>
+      </header>
+
+      <UploadPlaceholder
+        compact
+        onFileSelected={(file) => {
+          setUploadError(
+            `${file.name} was selected. Upload is not connected yet.`,
+          )
+        }}
+      />
+
+      {uploadError && (
+        <div className="inline-error inline-error--admin" role="alert">
+          <span aria-hidden="true">!</span>
+          <p>{uploadError}</p>
+        </div>
+      )}
+
+      <section
+        className="admin-card document-list"
+        aria-labelledby="document-list-title"
+      >
+        <header>
+          <div>
+            <h2 id="document-list-title">Document library</h2>
+            <p>Track upload, processing, and availability.</p>
+          </div>
+        </header>
+        <div className="table-heading" aria-hidden="true">
+          <span>Document</span>
+          <span>Status</span>
+          <span>Uploaded</span>
+        </div>
+        <div className="admin-empty">
+          <span aria-hidden="true">PDF</span>
+          <strong>No documents yet</strong>
+          <p>Uploaded PDFs will appear here with their ingestion status.</p>
+        </div>
+      </section>
     </div>
   )
 }
 
+function AdminConversations() {
+  return (
+    <div className="admin-page">
+      <header className="admin-page__header">
+        <div>
+          <p>Support activity</p>
+          <h1>Conversations</h1>
+        </div>
+        <span>0 conversations</span>
+      </header>
+
+      <section className="conversation-admin" aria-label="Conversation list">
+        <div className="conversation-admin__list">
+          <header>
+            <h2>Recent conversations</h2>
+            <span>All</span>
+          </header>
+          <div className="admin-empty admin-empty--compact">
+            <strong>No conversations yet</strong>
+            <p>Public chat sessions will appear after a PDF is ready.</p>
+          </div>
+        </div>
+        <div className="conversation-admin__detail">
+          <div className="admin-empty">
+            <span aria-hidden="true">•••</span>
+            <strong>Select a conversation</strong>
+            <p>Messages, citations, latency, and usage will appear here.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function AdminUsage() {
+  const metrics = [
+    ['AI requests', '0'],
+    ['Input tokens', '0'],
+    ['Output tokens', '0'],
+    ['Estimated cost', '$0.00'],
+  ]
+
+  return (
+    <div className="admin-page">
+      <header className="admin-page__header">
+        <div>
+          <p>Cost and performance</p>
+          <h1>Usage</h1>
+        </div>
+        <span>Current period</span>
+      </header>
+
+      <div className="usage-metrics">
+        {metrics.map(([label, value]) => (
+          <article key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+            <small>No activity yet</small>
+          </article>
+        ))}
+      </div>
+
+      <section
+        className="admin-card usage-chart"
+        aria-labelledby="usage-chart-title"
+      >
+        <header>
+          <div>
+            <h2 id="usage-chart-title">Requests over time</h2>
+            <p>
+              Daily request volume will appear after the AI workflow is
+              connected.
+            </p>
+          </div>
+        </header>
+        <div className="usage-chart__empty">
+          <div aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+          <p>No usage data for this period.</p>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function AdminPreview() {
+  const [section, setSection] = useState<AdminSection>('documents')
+  const navigation: Array<{ id: AdminSection; label: string }> = [
+    { id: 'documents', label: 'Documents' },
+    { id: 'conversations', label: 'Conversations' },
+    { id: 'usage', label: 'Usage' },
+  ]
+
+  return (
+    <main className="admin-shell">
+      <aside className="admin-sidebar">
+        <div>
+          <span>Admin preview</span>
+          <strong>Operations</strong>
+        </div>
+        <nav aria-label="Admin sections">
+          {navigation.map((item, index) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-current={section === item.id ? 'page' : undefined}
+              onClick={() => setSection(item.id)}
+            >
+              <span aria-hidden="true">0{index + 1}</span>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        <p>Static product shell</p>
+      </aside>
+
+      <div className="admin-content">
+        {section === 'documents' && <AdminDocuments />}
+        {section === 'conversations' && <AdminConversations />}
+        {section === 'usage' && <AdminUsage />}
+      </div>
+    </main>
+  )
+}
+
 function App() {
-  return <WorkspaceScreen />
+  const [view, setView] = useState<AppView>('demo')
+
+  return (
+    <div className="workspace-shell">
+      <AppHeader view={view} onViewChange={setView} />
+      {view === 'demo' ? <PublicDemo /> : <AdminPreview />}
+    </div>
+  )
 }
 
 export default App
