@@ -42,4 +42,11 @@ class UserFactory extends Factory
             'email_verified_at' => null,
         ]);
     }
+
+    public function administrator(): static
+    {
+        return $this->state(fn () => [
+            'is_admin' => true,
+        ]);
+    }
 }
