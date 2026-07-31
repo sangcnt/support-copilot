@@ -15,10 +15,16 @@
   --surface: #10151e;
   --surface-strong: #151b26;
   --border: #293141;
+  --border-soft: rgb(255 255 255 / 8%);
   --heading: #f7f9fc;
   --muted: #aab4c3;
   --accent: #8ba7ff;
   --success: #2ce7b7;
+  --mint: #4de5bd;
+  --blue: #7d9fff;
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  color-scheme: dark;
+  scroll-behavior: smooth;
 }
 
 * {
@@ -31,8 +37,24 @@ body {
   margin: 0;
 }
 
+body,
+button,
+textarea {
+  font-family: inherit;
+}
+
 button,
 input,
 textarea {
   font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  color: #07110f;
+  background: var(--mint);
 }
