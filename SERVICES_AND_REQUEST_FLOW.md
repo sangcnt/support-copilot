@@ -36,7 +36,7 @@ private application network.
 | React SPA | `frontend/` | Public upload workspace, PDF preview, and static admin preview |
 | Laravel API | `backend/` | Anonymous sessions, authorization, PDF lifecycle, admin API, and application records |
 | Laravel queue worker | Shared code in `backend/` | Runs the Redis worker; no ingestion job exists yet |
-| FastAPI AI service | `ai-service/` | Validates PDFs and extracts normalized text plus page/line coordinates; chunking, RAG, and LLM workflows are not implemented |
+| FastAPI AI service | `ai-service/` | Validates PDFs, extracts normalized text and page/line coordinates, and creates deterministic token-aware chunks; embeddings, RAG, and LLM workflows are not implemented |
 | Nginx | `infrastructure/nginx/` | Builds and serves the React bundle and forwards `/api/*` and `/sanctum/*` to PHP-FPM |
 | PHP-FPM image | `infrastructure/php/` | Laravel runtime and file-upload limits |
 | PostgreSQL initialization | `infrastructure/postgres/` | Enables pgvector; Laravel migrations manage application tables |
@@ -263,10 +263,10 @@ sequenceDiagram
     UI->>API: POST /api/public/documents/{id}/ingestions
     API->>Files: Open the authorized private PDF
     API->>AI: POST /internal/ingestions (multipart PDF)
-    AI->>AI: Validate and parse normalized text + page structure
-    AI-->>API: 202 checksum and parser receipt
-    API-->>UI: 202 parser receipt
-    UI-->>User: Keep preview visible and show parser summary
+    AI->>AI: Validate, parse, and create deterministic chunks
+    AI-->>API: 202 parser and chunker receipt
+    API-->>UI: 202 parser and chunker receipt
+    UI-->>User: Keep preview visible and show chunk summary
 ```
 
 ### 6.1 Opening the demo
@@ -317,12 +317,17 @@ sequenceDiagram
    and calculates SHA-256.
 5. `pdfplumber` extracts NFKC-normalized text, document metadata, page
    dimensions, ordered lines, character offsets, and line bounding boxes.
-6. The `202 Accepted` development receipt includes parser version, normalized
-   text, page/line structure, empty-page count, and extractable-text status.
-7. FastAPI does not persist the parser output and does not chunk, embed, run
-   OCR, or call a model in this slice.
-8. Laravel does not change `pending_ingestion` or `pending`; the UI shows a
-   parser summary and text preview while chat remains locked.
+6. The line-aware chunker uses the pinned `cl100k_base` tokenizer to create
+   stable chunks targeting 650 tokens, capped at 800 tokens, with up to 80
+   overlap tokens when the next chunk can still make forward progress.
+7. Every chunk includes an ordinal, checksum, token count, source character
+   range, page range, and compact page/line source spans. The complete chunk
+   set also has a reproducible checksum and versioned configuration.
+8. The `202 Accepted` development receipt includes the parser and chunking
+   output. FastAPI does not persist either output and does not embed, run OCR,
+   or call a model in this slice.
+9. Laravel does not change `pending_ingestion` or `pending`; the UI shows a
+   parser/chunker summary and first-chunk preview while chat remains locked.
 
 ### 6.4 Previewing a PDF
 
@@ -347,13 +352,13 @@ sequenceDiagram
 ### 6.6 Asking a question today
 
 An uploaded document remains `pending_ingestion`, so the chat composer stays
-locked after displaying the parser result.
+locked after displaying the parser and chunker result.
 
 The current application does not yet:
 
 - expose a public chat endpoint;
 - create conversations or messages;
-- persist parser output or run OCR;
+- persist parser/chunker output or run OCR;
 - create query or chunk embeddings;
 - query pgvector;
 - call an answer model;
@@ -407,7 +412,7 @@ sequenceDiagram
 
 | Capability | Public or internal endpoint | Status |
 |---|---|---|
-| Persisted parsed block and chunk inspection | — | Parser output currently exists only in the ingestion receipt |
+| Persisted parsed block and chunk inspection | — | Parser and chunker output currently exists only in the ingestion receipt |
 | Retrieval inspection | — | Not implemented |
 | Create or continue a public conversation | — | Not implemented |
 | Submit a question and receive a stream | — | API and event contract not defined |
@@ -428,7 +433,7 @@ FastAPI and model providers remain private.
 |---|---|---|
 | Open demo | `anonymous_sessions` | None |
 | Upload PDF | Private PDF, `documents`, and `document_versions` | None |
-| Ingestion handoff | Normalized text and page/line metadata in the response only | Persisted normalized blocks, `chunks`, and vectors |
+| Ingestion handoff | Normalized text, page/line metadata, and deterministic chunks in the response only | Persisted `chunks` and vectors |
 | Ask question | Not implemented | `conversations` and user `messages` |
 | Generate answer | Not implemented | Assistant `messages`, `message_citations`, and `usage_events` |
 | Feedback and handoff | Not implemented | Feedback and conversation support state |
@@ -450,14 +455,14 @@ Implemented
   separate Laravel-to-FastAPI PDF handoff
   FastAPI Swagger and ingestion debug receipt
   normalized PDF text and page/line structural metadata
+  deterministic token-aware chunks with source ranges and checksums
   static administrator preview
   protected administrator Laravel API
 
 Not implemented
   administrator login UI
   asynchronous ingestion queue job
-  parser-output persistence and OCR
-  chunking
+  parser/chunker-output persistence and OCR
   embeddings
   pgvector retrieval
   grounded generation
