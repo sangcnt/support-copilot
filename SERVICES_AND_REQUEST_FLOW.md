@@ -36,7 +36,7 @@ private application network.
 | React SPA | `frontend/` | Public upload workspace, PDF preview, and static admin preview |
 | Laravel API | `backend/` | Anonymous sessions, authorization, PDF lifecycle, admin API, and application records |
 | Laravel queue worker | Shared code in `backend/` | Runs the Redis worker; no ingestion job exists yet |
-| FastAPI AI service | `ai-service/` | Receives an internal PDF handoff and returns debug metadata; parsing, RAG, and LLM workflows are not implemented |
+| FastAPI AI service | `ai-service/` | Validates PDFs and extracts normalized text plus page/line coordinates; chunking, RAG, and LLM workflows are not implemented |
 | Nginx | `infrastructure/nginx/` | Builds and serves the React bundle and forwards `/api/*` and `/sanctum/*` to PHP-FPM |
 | PHP-FPM image | `infrastructure/php/` | Laravel runtime and file-upload limits |
 | PostgreSQL initialization | `infrastructure/postgres/` | Enables pgvector; Laravel migrations manage application tables |
@@ -193,7 +193,8 @@ checksum=<document_versions.content_checksum>
 ```
 
 The current response is a development receipt containing filename, byte size,
-PDF signature, calculated SHA-256, and whether it matches Laravel's checksum.
+PDF signature, calculated SHA-256, checksum match, normalized text, document
+metadata, and page/line coordinates.
 
 ### 5.2 Administrator API
 
@@ -220,10 +221,10 @@ Sanctum authentication and administrator authorization.
 | Method | Internal path | Status |
 |---|---|---|
 | `GET` | `/health` | Implemented for internal health checks |
-| `POST` | `/internal/ingestions` | Receives multipart PDF data and returns a debug receipt; no processing or persistence yet |
+| `POST` | `/internal/ingestions` | Receives multipart PDF data and returns checksum plus parser output; no persistence yet |
 
 FastAPI is not exposed through the public application. Its Swagger UI is
-available on a development-only loopback listener at `/docs`. Parsing,
+available on a development-only loopback listener at `/docs`. Chunking,
 retrieval, and generation routes have not been implemented or named.
 
 ## 6. Current guest flow
@@ -262,10 +263,10 @@ sequenceDiagram
     UI->>API: POST /api/public/documents/{id}/ingestions
     API->>Files: Open the authorized private PDF
     API->>AI: POST /internal/ingestions (multipart PDF)
-    AI->>AI: Inspect size, signature, and SHA-256 only
-    AI-->>API: 202 debug receipt
-    API-->>UI: 202 debug receipt
-    UI-->>User: Keep preview visible and show handoff debug data
+    AI->>AI: Validate and parse normalized text + page structure
+    AI-->>API: 202 checksum and parser receipt
+    API-->>UI: 202 parser receipt
+    UI-->>User: Keep preview visible and show parser summary
 ```
 
 ### 6.1 Opening the demo
@@ -313,11 +314,15 @@ sequenceDiagram
    and sends it to `POST /internal/ingestions` as multipart data with the
    document-version ID and Laravel checksum.
 4. FastAPI reads the source in bounded blocks, verifies the `%PDF-` signature,
-   calculates SHA-256, and returns a `202 Accepted` debug receipt.
-5. FastAPI does not store the source and does not parse, chunk, embed, or call a
-   model in this slice.
-6. Laravel does not change `pending_ingestion` or `pending`; the UI shows the
-   receipt while chat remains locked.
+   and calculates SHA-256.
+5. `pdfplumber` extracts NFKC-normalized text, document metadata, page
+   dimensions, ordered lines, character offsets, and line bounding boxes.
+6. The `202 Accepted` development receipt includes parser version, normalized
+   text, page/line structure, empty-page count, and extractable-text status.
+7. FastAPI does not persist the parser output and does not chunk, embed, run
+   OCR, or call a model in this slice.
+8. Laravel does not change `pending_ingestion` or `pending`; the UI shows a
+   parser summary and text preview while chat remains locked.
 
 ### 6.4 Previewing a PDF
 
@@ -342,13 +347,13 @@ sequenceDiagram
 ### 6.6 Asking a question today
 
 An uploaded document remains `pending_ingestion`, so the chat composer stays
-locked and displays `Awaiting ingestion`.
+locked after displaying the parser result.
 
 The current application does not yet:
 
 - expose a public chat endpoint;
 - create conversations or messages;
-- parse or persist document content in FastAPI;
+- persist parser output or run OCR;
 - create query or chunk embeddings;
 - query pgvector;
 - call an answer model;
@@ -402,7 +407,7 @@ sequenceDiagram
 
 | Capability | Public or internal endpoint | Status |
 |---|---|---|
-| Parsed block and chunk inspection | — | Not implemented |
+| Persisted parsed block and chunk inspection | — | Parser output currently exists only in the ingestion receipt |
 | Retrieval inspection | — | Not implemented |
 | Create or continue a public conversation | — | Not implemented |
 | Submit a question and receive a stream | — | API and event contract not defined |
@@ -423,7 +428,7 @@ FastAPI and model providers remain private.
 |---|---|---|
 | Open demo | `anonymous_sessions` | None |
 | Upload PDF | Private PDF, `documents`, and `document_versions` | None |
-| Ingestion handoff | FastAPI debug receipt only; not persisted | Normalized blocks, `chunks`, and vectors |
+| Ingestion handoff | Normalized text and page/line metadata in the response only | Persisted normalized blocks, `chunks`, and vectors |
 | Ask question | Not implemented | `conversations` and user `messages` |
 | Generate answer | Not implemented | Assistant `messages`, `message_citations`, and `usage_events` |
 | Feedback and handoff | Not implemented | Feedback and conversation support state |
@@ -444,13 +449,14 @@ Implemented
   authorized list, show, preview, and delete
   separate Laravel-to-FastAPI PDF handoff
   FastAPI Swagger and ingestion debug receipt
+  normalized PDF text and page/line structural metadata
   static administrator preview
   protected administrator Laravel API
 
 Not implemented
   administrator login UI
   asynchronous ingestion queue job
-  PDF parser and OCR
+  parser-output persistence and OCR
   chunking
   embeddings
   pgvector retrieval

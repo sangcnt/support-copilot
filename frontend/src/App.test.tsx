@@ -148,16 +148,34 @@ describe('App', () => {
             checksum_matches: true,
             pdf_signature: '%PDF-',
           },
+          parser: {
+            parser_version: 'pdfplumber-0.11.10:v1',
+            page_count: 1,
+            character_count: 58,
+            line_count: 2,
+            empty_page_count: 0,
+            has_extractable_text: true,
+            metadata: { title: 'Refund policy' },
+            normalized_text:
+              'Refund policy\nCustomers may request a refund within 30 days.',
+            pages: [],
+          },
         },
       })) as Response,
     )
 
     expect(
-      await screen.findByText('PDF received by the AI service'),
+      await screen.findByText('PDF parsed by the AI service'),
     ).toBeInTheDocument()
     expect(screen.getByText('Match')).toBeInTheDocument()
     expect(screen.getByText('%PDF-')).toBeInTheDocument()
-    expect(screen.getAllByText('Source received')).toHaveLength(2)
+    expect(screen.getAllByText('Parsed')).toHaveLength(2)
+    expect(screen.getByText('Normalized text preview')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Refund policy Customers may request a refund within 30 days.',
+      ),
+    ).toBeInTheDocument()
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(

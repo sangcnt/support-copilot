@@ -1338,6 +1338,45 @@ textarea:focus-visible {
   grid-column: 1 / -1;
 }
 
+.parser-preview {
+  width: min(430px, 100%);
+  margin-top: 10px;
+  border: 1px solid #293543;
+  border-radius: 9px;
+  padding: 10px;
+  background: #0d141d;
+  text-align: left;
+}
+
+.parser-preview > span {
+  color: #647284;
+  font-size: 0.54rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.parser-preview pre {
+  max-height: 150px;
+  overflow: auto;
+  margin: 8px 0 0;
+  color: #aebac8;
+  font:
+    0.59rem/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.parser-preview p {
+  margin-top: 8px;
+  text-align: left;
+}
+
 .assistant-avatar {
   width: 36px;
   height: 36px;

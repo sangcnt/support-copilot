@@ -52,6 +52,17 @@ class PublicDocumentIngestionTest extends TestCase
                     'checksum_matches' => true,
                     'pdf_signature' => '%PDF-',
                 ],
+                'parser' => [
+                    'parser_version' => 'pdfplumber-0.11.10:v1',
+                    'page_count' => 1,
+                    'character_count' => 14,
+                    'line_count' => 1,
+                    'empty_page_count' => 0,
+                    'has_extractable_text' => true,
+                    'metadata' => [],
+                    'normalized_text' => 'Refund policy.',
+                    'pages' => [],
+                ],
             ], 202),
         ]);
 
@@ -60,7 +71,9 @@ class PublicDocumentIngestionTest extends TestCase
             ->assertStatus(202)
             ->assertJsonPath('data.status', 'received')
             ->assertJsonPath('data.document_version_id', $version->id)
-            ->assertJsonPath('data.file.checksum_matches', true);
+            ->assertJsonPath('data.file.checksum_matches', true)
+            ->assertJsonPath('data.parser.page_count', 1)
+            ->assertJsonPath('data.parser.normalized_text', 'Refund policy.');
 
         Http::assertSent(function (Request $request) use ($checksum, $version): bool {
             $parts = collect($request->data())->keyBy('name');

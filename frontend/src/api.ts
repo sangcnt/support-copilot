@@ -26,6 +26,32 @@ export type IngestionReceipt = {
     checksum_matches: boolean | null
     pdf_signature: string
   }
+  parser: {
+    parser_version: string
+    page_count: number
+    character_count: number
+    line_count: number
+    empty_page_count: number
+    has_extractable_text: boolean
+    metadata: Record<string, string>
+    normalized_text: string
+    pages: Array<{
+      page_number: number
+      width: number
+      height: number
+      rotation: number
+      text_start: number
+      text_end: number
+      line_count: number
+      lines: Array<{
+        line_number: number
+        text: string
+        text_start: number
+        text_end: number
+        bbox: [number, number, number, number]
+      }>
+    }>
+  }
 }
 
 type ErrorEnvelope = {

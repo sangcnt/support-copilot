@@ -24,7 +24,8 @@ class AiIngestionClient
      *         sha256: string,
      *         checksum_matches: bool|null,
      *         pdf_signature: string
-     *     }
+     *     },
+     *     parser: array<string, mixed>
      * }
      */
     public function receive(Document $document): array
@@ -68,6 +69,7 @@ class AiIngestionClient
             || ($receipt['status'] ?? null) !== 'received'
             || ($receipt['document_version_id'] ?? null) !== $version->id
             || ! is_array($receipt['file'] ?? null)
+            || ! is_array($receipt['parser'] ?? null)
         ) {
             throw new RuntimeException('The AI service returned an invalid ingestion receipt.');
         }

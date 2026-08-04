@@ -141,7 +141,7 @@ function SourcePanel({
   initializing,
   uploading,
   ingesting,
-  sourceReceived,
+  sourceParsed,
   error,
   onFileSelected,
   onRemove,
@@ -150,7 +150,7 @@ function SourcePanel({
   initializing: boolean
   uploading: boolean
   ingesting: boolean
-  sourceReceived: boolean
+  sourceParsed: boolean
   error: string | null
   onFileSelected: (file: File) => void
   onRemove: () => void
@@ -193,8 +193,8 @@ function SourcePanel({
           <span className="waiting-badge">
             {ingesting
               ? 'Ingesting'
-              : sourceReceived
-                ? 'Source received'
+              : sourceParsed
+                ? 'Parsed'
                 : 'Awaiting ingestion'}
           </span>
         </div>
@@ -340,7 +340,7 @@ function ChatPanel({
             {state === 'ingesting'
               ? 'Ingesting'
               : state === 'received'
-                ? 'Source received'
+                ? 'Parsed'
                 : 'Awaiting ingestion'}
           </span>
         </header>
@@ -373,10 +373,10 @@ function ChatPanel({
           )}
           {state === 'received' && ingestionReceipt && (
             <>
-              <strong>PDF received by the AI service</strong>
+              <strong>PDF parsed by the AI service</strong>
               <p>
-                The handoff is working. Parsing, chunks, and embeddings are the
-                next implementation steps, so chat remains locked for now.
+                Normalized text and page structure are available. Chunking and
+                embeddings are the next steps, so chat remains locked for now.
               </p>
               <dl className="ingestion-debug">
                 <div>
@@ -401,11 +401,46 @@ function ChatPanel({
                         : 'Mismatch'}
                   </dd>
                 </div>
+                <div>
+                  <dt>Pages</dt>
+                  <dd>{ingestionReceipt.parser.page_count}</dd>
+                </div>
+                <div>
+                  <dt>Text characters</dt>
+                  <dd>
+                    {ingestionReceipt.parser.character_count.toLocaleString()}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Structured lines</dt>
+                  <dd>{ingestionReceipt.parser.line_count.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt>Extractable text</dt>
+                  <dd>
+                    {ingestionReceipt.parser.has_extractable_text
+                      ? 'Yes'
+                      : 'No'}
+                  </dd>
+                </div>
                 <div className="ingestion-debug__hash">
                   <dt>SHA-256</dt>
                   <dd>{ingestionReceipt.file.sha256}</dd>
                 </div>
               </dl>
+              <div className="parser-preview">
+                <span>Normalized text preview</span>
+                {ingestionReceipt.parser.has_extractable_text ? (
+                  <pre>
+                    {ingestionReceipt.parser.normalized_text.slice(0, 700)}
+                  </pre>
+                ) : (
+                  <p>
+                    No embedded text was found. OCR is not implemented in this
+                    parser step.
+                  </p>
+                )}
+              </div>
             </>
           )}
           {state === 'idle' && (
@@ -698,7 +733,7 @@ function PublicDemo() {
             initializing={initializing}
             uploading={uploading}
             ingesting={ingesting}
-            sourceReceived={ingestionReceipt !== null}
+            sourceParsed={ingestionReceipt !== null}
             error={documentError}
             onFileSelected={(file) => void handleUpload(file)}
             onRemove={() => void handleRemove()}

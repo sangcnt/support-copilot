@@ -3,9 +3,11 @@ import logging
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from support_copilot_ai.config import get_settings
+from support_copilot_ai.pdf_parser import ParsedDocument, PdfParser, PdfParsingError
 
 
 class HealthResponse(BaseModel):
@@ -26,6 +28,7 @@ class IngestionReceipt(BaseModel):
     status: Literal["received"]
     document_version_id: str
     file: ReceivedFileDebug
+    parser: ParsedDocument
 
 
 settings = get_settings()
@@ -38,9 +41,9 @@ READ_BLOCK_BYTES = 1024 * 1024
 app = FastAPI(
     title="Support Copilot AI Service",
     description=(
-        "Internal AI workflow API. The ingestion endpoint currently receives and "
-        "inspects a PDF only; parsing, chunking, embeddings, and persistence are "
-        "not implemented yet."
+        "Internal AI workflow API. The ingestion endpoint receives a PDF and "
+        "extracts normalized text with page and line metadata. Chunking, embeddings, "
+        "and persistence are not implemented yet."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -72,8 +75,18 @@ async def receive_ingestion(
         ),
     ] = None,
 ) -> IngestionReceipt:
-    """Acknowledge a PDF without parsing or persisting it."""
+    """Orchestrate the ingestion pipeline for one document version.
 
+    This endpoint should coordinate the numbered pipeline steps. The detailed work
+    for each step belongs in focused parser, chunker, embedding, and repository
+    services so this HTTP handler remains easy to follow and test.
+
+    Currently implemented: source receipt/validation and step 3 (PDF parsing).
+    Steps 4-8 remain intentionally unimplemented.
+    """
+
+    # Steps 1-2 (implemented): receive the authorized PDF source and validate the
+    # transport-level constraints before any document processing begins.
     digest = hashlib.sha256()
     byte_size = 0
     signature = b""
@@ -103,6 +116,33 @@ async def receive_ingestion(
     )
     filename = file.filename or "document.pdf"
 
+    # Step 3 (implemented): extract normalized text and structural metadata.
+    # PdfParser returns document/page/line text offsets and line bounding boxes.
+    # It does not create chunks, embeddings, or database records.
+    await file.seek(0)
+
+    try:
+        parsed_document = await run_in_threadpool(PdfParser().parse, file.file)
+    except PdfParsingError as exception:
+        logger.warning(
+            "Unable to parse ingestion source document_version_id=%s filename=%r",
+            document_version_id,
+            file.filename,
+            exc_info=exception,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The PDF could not be parsed.",
+        ) from exception
+
+    # Planned pipeline continuation (not implemented in this step):
+    # Step 4: create deterministic chunks from parsed_document.
+    # Step 5: generate embeddings in size-limited batches.
+    # Step 6: persist chunks, embeddings, and metadata in one transaction.
+    # Step 7: mark the document version as ready only after persistence succeeds.
+    # Step 8: on failure, persist a safe user-facing reason separately from the
+    #         internal diagnostic details used in logs and debugging.
+
     logger.info(
         "Received ingestion source document_version_id=%s filename=%r "
         "content_type=%s byte_size=%d sha256=%s checksum_matches=%s",
@@ -125,4 +165,5 @@ async def receive_ingestion(
             checksum_matches=checksum_matches,
             pdf_signature=signature.decode("ascii"),
         ),
+        parser=parsed_document,
     )
