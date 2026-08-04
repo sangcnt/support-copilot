@@ -9,6 +9,7 @@ RUN apk add --no-cache libpq-dev linux-headers \
     && apk del .build-dependencies
 
 COPY --from=composer:2.9 /usr/bin/composer /usr/local/bin/composer
+COPY infrastructure/php/uploads.ini /usr/local/etc/php/conf.d/uploads.ini
 
 WORKDIR /var/www/html
 

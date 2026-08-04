@@ -67,4 +67,21 @@ class PublicDocumentAccessTest extends TestCase
             ->assertJsonPath('data.id', $sample->id)
             ->assertJsonPath('data.is_sample', true);
     }
+
+    public function test_expired_private_document_is_no_longer_accessible(): void
+    {
+        $token = 'active-owner-with-expired-document';
+        $owner = AnonymousSession::factory()->create([
+            'token_hash' => hash('sha256', $token),
+        ]);
+        $document = Document::factory()->for($owner)->create([
+            'expires_at' => now()->subMinute(),
+        ]);
+
+        $this->withHeader('Origin', 'http://localhost')
+            ->withCredentials()
+            ->withCookie(config('demo.session.cookie'), $token)
+            ->getJson("/api/public/documents/{$document->id}")
+            ->assertNotFound();
+    }
 }

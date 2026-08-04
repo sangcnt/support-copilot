@@ -6,6 +6,7 @@ use App\Http\Requests\UpdateSampleDocumentRequest;
 use App\Http\Resources\DocumentResource;
 use App\Models\AuditEvent;
 use App\Models\Document;
+use App\Services\DocumentStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -21,6 +22,7 @@ class AdminDocumentController extends Controller
 
         $documents = Document::query()
             ->withCount('versions')
+            ->with('latestVersion')
             ->latest()
             ->limit(50)
             ->get();
@@ -59,8 +61,11 @@ class AdminDocumentController extends Controller
         return new DocumentResource($document->refresh());
     }
 
-    public function destroy(Request $request, Document $document): JsonResponse
-    {
+    public function destroy(
+        Request $request,
+        Document $document,
+        DocumentStorage $storage,
+    ): JsonResponse {
         Gate::authorize('delete', $document);
 
         DB::transaction(function () use ($document, $request): void {
@@ -73,6 +78,8 @@ class AdminDocumentController extends Controller
 
             $document->delete();
         });
+
+        $storage->deleteSources($document);
 
         return response()->json(['data' => null]);
     }

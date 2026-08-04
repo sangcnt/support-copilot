@@ -1,4 +1,12 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  deleteDocument,
+  documentSourceUrl,
+  listDocuments,
+  startAnonymousSession,
+  uploadDocument,
+  type DocumentRecord,
+} from './api'
 import './App.css'
 
 type AppView = 'demo' | 'admin'
@@ -59,9 +67,11 @@ function AppHeader({
 
 function UploadPlaceholder({
   compact = false,
+  disabled = false,
   onFileSelected,
 }: {
   compact?: boolean
+  disabled?: boolean
   onFileSelected: (file: File) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -84,7 +94,9 @@ function UploadPlaceholder({
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault()
-        selectFile(event.dataTransfer.files)
+        if (!disabled) {
+          selectFile(event.dataTransfer.files)
+        }
       }}
     >
       <input
@@ -92,7 +104,11 @@ function UploadPlaceholder({
         className="visually-hidden"
         type="file"
         accept="application/pdf,.pdf"
-        onChange={(event) => selectFile(event.target.files)}
+        disabled={disabled}
+        onChange={(event) => {
+          selectFile(event.target.files)
+          event.target.value = ''
+        }}
         aria-label="Choose a PDF"
       />
       <span className="upload-placeholder__mark" aria-hidden="true">
@@ -106,16 +122,87 @@ function UploadPlaceholder({
             : 'Upload a document, then ask questions and inspect every citation.'}
         </p>
       </div>
-      <button type="button" onClick={() => inputRef.current?.click()}>
-        Choose PDF
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+      >
+        {disabled ? 'Uploading…' : 'Choose PDF'}
       </button>
       <small>PDF only · Maximum 10 MB</small>
     </div>
   )
 }
 
-function SourcePanel() {
-  const [uploadError, setUploadError] = useState<string | null>(null)
+function SourcePanel({
+  document,
+  initializing,
+  uploading,
+  error,
+  onFileSelected,
+  onRemove,
+}: {
+  document: DocumentRecord | null
+  initializing: boolean
+  uploading: boolean
+  error: string | null
+  onFileSelected: (file: File) => void
+  onRemove: () => void
+}) {
+  if (document) {
+    const size = document.latest_version
+      ? `${(document.latest_version.byte_size / 1024 / 1024).toFixed(2)} MB`
+      : 'PDF'
+
+    return (
+      <section
+        className="workspace-panel source-panel"
+        aria-label="Source document"
+      >
+        <header className="panel-header">
+          <div>
+            <span className="panel-header__label">Source document</span>
+            <h2>{document.display_name}</h2>
+          </div>
+          {!document.is_sample && (
+            <button
+              className="source-remove"
+              type="button"
+              disabled={uploading}
+              onClick={onRemove}
+            >
+              Remove
+            </button>
+          )}
+        </header>
+
+        <div className="document-meta">
+          <span className="file-mark" aria-hidden="true">
+            PDF
+          </span>
+          <div>
+            <strong>{document.display_name}</strong>
+            <span>{size} · Stored privately</span>
+          </div>
+          <span className="waiting-badge">Awaiting ingestion</span>
+        </div>
+
+        {error && (
+          <div className="inline-error inline-error--source" role="alert">
+            <span aria-hidden="true">!</span>
+            <p>{error}</p>
+          </div>
+        )}
+
+        <div className="source-preview">
+          <iframe
+            title={`Preview of ${document.display_name}`}
+            src={documentSourceUrl(document.id)}
+          />
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section
@@ -125,23 +212,22 @@ function SourcePanel() {
       <header className="panel-header">
         <div>
           <span className="panel-header__label">Source document</span>
-          <h2>No PDF selected</h2>
+          <h2>
+            {initializing ? 'Restoring your session…' : 'No PDF selected'}
+          </h2>
         </div>
       </header>
 
       <div className="source-empty">
         <UploadPlaceholder
-          onFileSelected={(file) => {
-            setUploadError(
-              `${file.name} was selected, but the upload pipeline is not connected yet.`,
-            )
-          }}
+          disabled={initializing || uploading}
+          onFileSelected={onFileSelected}
         />
 
-        {uploadError && (
+        {error && (
           <div className="inline-error" role="alert">
             <span aria-hidden="true">!</span>
-            <p>{uploadError}</p>
+            <p>{error}</p>
           </div>
         )}
 
@@ -160,7 +246,7 @@ function SourcePanel() {
   )
 }
 
-function ChatPanel({ hasDocument }: { hasDocument: boolean }) {
+function ChatPanel({ document }: { document: DocumentRecord | null }) {
   const [draft, setDraft] = useState('')
   const [submittedQuestion, setSubmittedQuestion] = useState<string | null>(
     null,
@@ -177,7 +263,7 @@ function ChatPanel({ hasDocument }: { hasDocument: boolean }) {
     setDraft('')
   }
 
-  if (!hasDocument) {
+  if (!document) {
     return (
       <section className="workspace-panel chat-panel" aria-label="Support chat">
         <header className="panel-header chat-panel__header">
@@ -200,6 +286,35 @@ function ChatPanel({ hasDocument }: { hasDocument: boolean }) {
           <p>
             The question box will appear after the document has finished
             processing.
+          </p>
+        </div>
+      </section>
+    )
+  }
+
+  if (document.status !== 'ready') {
+    return (
+      <section className="workspace-panel chat-panel" aria-label="Support chat">
+        <header className="panel-header chat-panel__header">
+          <div className="assistant-avatar" aria-hidden="true">
+            C
+            <span />
+          </div>
+          <div>
+            <span className="panel-header__label">Document assistant</span>
+            <h2>Ask your PDF</h2>
+          </div>
+          <span className="waiting-badge">Awaiting ingestion</span>
+        </header>
+
+        <div className="chat-locked">
+          <span className="chat-locked__mark" aria-hidden="true">
+            ✓
+          </span>
+          <strong>PDF uploaded securely</strong>
+          <p>
+            Preview is available now. Chat will unlock after document processing
+            is connected.
           </p>
         </div>
       </section>
@@ -230,8 +345,8 @@ function ChatPanel({ hasDocument }: { hasDocument: boolean }) {
           </div>
           <div className="message__content">
             <p>
-              Upload a PDF to start. I’ll answer from that document and show the
-              supporting passages with every response.
+              Your PDF is ready. Ask a question and I’ll answer only from that
+              document, with supporting passages for every response.
             </p>
           </div>
         </article>
@@ -311,6 +426,100 @@ function ChatPanel({ hasDocument }: { hasDocument: boolean }) {
 
 function PublicDemo() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('source')
+  const [document, setDocument] = useState<DocumentRecord | null>(null)
+  const [initializing, setInitializing] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [documentError, setDocumentError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    const restoreSession = async () => {
+      try {
+        await startAnonymousSession()
+        const documents = await listDocuments()
+
+        if (active) {
+          setDocument(
+            documents.find((candidate) => !candidate.is_sample) ??
+              documents[0] ??
+              null,
+          )
+        }
+      } catch (error) {
+        if (active) {
+          setDocumentError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to restore the demo session.',
+          )
+        }
+      } finally {
+        if (active) {
+          setInitializing(false)
+        }
+      }
+    }
+
+    void restoreSession()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const handleUpload = async (file: File) => {
+    setDocumentError(null)
+
+    if (
+      file.type !== 'application/pdf' &&
+      !file.name.toLowerCase().endsWith('.pdf')
+    ) {
+      setDocumentError('Choose a valid PDF document.')
+      return
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setDocumentError('The PDF must not exceed 10 MB.')
+      return
+    }
+
+    setUploading(true)
+
+    try {
+      const uploaded = await uploadDocument(file)
+      setDocument(uploaded)
+    } catch (error) {
+      setDocumentError(
+        error instanceof Error ? error.message : 'The PDF upload failed.',
+      )
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleRemove = async () => {
+    if (
+      !document ||
+      !window.confirm('Remove this PDF from the demo session?')
+    ) {
+      return
+    }
+
+    setUploading(true)
+    setDocumentError(null)
+
+    try {
+      await deleteDocument(document.id)
+      setDocument(null)
+    } catch (error) {
+      setDocumentError(
+        error instanceof Error ? error.message : 'Unable to remove the PDF.',
+      )
+    } finally {
+      setUploading(false)
+    }
+  }
 
   return (
     <>
@@ -349,7 +558,14 @@ function PublicDemo() {
           role="tabpanel"
           aria-labelledby="source-tab"
         >
-          <SourcePanel />
+          <SourcePanel
+            document={document}
+            initializing={initializing}
+            uploading={uploading}
+            error={documentError}
+            onFileSelected={(file) => void handleUpload(file)}
+            onRemove={() => void handleRemove()}
+          />
         </div>
         <div
           id="chat-panel"
@@ -358,7 +574,7 @@ function PublicDemo() {
           role="tabpanel"
           aria-labelledby="chat-tab"
         >
-          <ChatPanel hasDocument={false} />
+          <ChatPanel document={document} />
         </div>
       </main>
     </>

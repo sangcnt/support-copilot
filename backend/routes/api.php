@@ -17,8 +17,16 @@ Route::get('/health', function () {
 
 Route::prefix('public')->group(function (): void {
     Route::get('/session', PublicSessionController::class);
+    Route::middleware('anonymous.session')->group(function (): void {
+        Route::get('/documents', [PublicDocumentController::class, 'index']);
+        Route::post('/documents', [PublicDocumentController::class, 'store']);
+    });
     Route::get('/documents/{document}', [PublicDocumentController::class, 'show'])
         ->middleware('document.access');
+    Route::get('/documents/{document}/source', [PublicDocumentController::class, 'source'])
+        ->middleware('document.access');
+    Route::delete('/documents/{document}', [PublicDocumentController::class, 'destroy'])
+        ->middleware(['anonymous.session', 'document.owner']);
 });
 
 Route::prefix('auth')->group(function (): void {

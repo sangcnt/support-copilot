@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Middleware\EnsureAdministrator;
+use App\Http\Middleware\EnsureAnonymousSession;
 use App\Http\Middleware\EnsureDocumentAccess;
+use App\Http\Middleware\EnsureDocumentOwner;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -24,7 +26,9 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'admin' => EnsureAdministrator::class,
+            'anonymous.session' => EnsureAnonymousSession::class,
             'document.access' => EnsureDocumentAccess::class,
+            'document.owner' => EnsureDocumentOwner::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

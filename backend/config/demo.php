@@ -9,4 +9,9 @@ return [
         'secure' => env('DEMO_SESSION_SECURE_COOKIE', false),
         'same_site' => env('DEMO_SESSION_SAME_SITE', 'lax'),
     ],
+
+    'documents' => [
+        'disk' => env('DOCUMENT_DISK', 'documents'),
+        'max_kilobytes' => (int) env('DOCUMENT_MAX_KILOBYTES', 10240),
+    ],
 ];

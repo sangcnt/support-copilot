@@ -17,6 +17,16 @@ class DocumentResource extends JsonResource
             'is_sample' => $this->is_sample,
             'expires_at' => $this->expires_at?->toIso8601String(),
             'versions_count' => $this->whenCounted('versions'),
+            'latest_version' => $this->whenLoaded(
+                'latestVersion',
+                fn () => $this->latestVersion === null ? null : [
+                    'id' => $this->latestVersion->id,
+                    'mime_type' => $this->latestVersion->mime_type,
+                    'byte_size' => $this->latestVersion->byte_size,
+                    'content_checksum' => $this->latestVersion->content_checksum,
+                    'ingestion_status' => $this->latestVersion->ingestion_status,
+                ],
+            ),
             'created_at' => $this->created_at->toIso8601String(),
         ];
     }

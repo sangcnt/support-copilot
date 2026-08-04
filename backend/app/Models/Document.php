@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Document extends Model
@@ -43,6 +44,11 @@ class Document extends Model
         return $this->hasMany(DocumentVersion::class);
     }
 
+    public function latestVersion(): HasOne
+    {
+        return $this->hasOne(DocumentVersion::class)->ofMany('version', 'max');
+    }
+
     public function conversations(): HasMany
     {
         return $this->hasMany(Conversation::class);
@@ -58,6 +64,7 @@ class Document extends Model
         return $this->is_sample || (
             $session !== null
             && $this->anonymous_session_id === $session->id
+            && ($this->expires_at === null || $this->expires_at->isFuture())
         );
     }
 }
