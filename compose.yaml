@@ -32,6 +32,7 @@ x-backend-environment: &backend-environment
   ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
   DOCUMENT_DISK: ${DOCUMENT_DISK:-documents}
   DOCUMENT_MAX_KILOBYTES: ${DOCUMENT_MAX_KILOBYTES:-10240}
+  AI_SERVICE_TIMEOUT: ${AI_SERVICE_TIMEOUT:-30}
   REDIS_CLIENT: phpredis
   REDIS_HOST: redis
   REDIS_PORT: 6379
@@ -133,6 +134,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
+    ports:
+      - "127.0.0.1:${AI_APP_PORT:-8030}:8000"
     healthcheck:
       test:
         - CMD

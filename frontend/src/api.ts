@@ -15,6 +15,19 @@ export type DocumentRecord = {
   created_at: string
 }
 
+export type IngestionReceipt = {
+  status: 'received'
+  document_version_id: string
+  file: {
+    filename: string
+    content_type: string | null
+    byte_size: number
+    sha256: string
+    checksum_matches: boolean | null
+    pdf_signature: string
+  }
+}
+
 type ErrorEnvelope = {
   error?: {
     message?: string
@@ -68,17 +81,23 @@ function csrfToken(): string | null {
   return cookie ? decodeURIComponent(cookie.slice('XSRF-TOKEN='.length)) : null
 }
 
-async function csrfHeaders(): Promise<Record<string, string>> {
-  const response = await fetch(url('sanctum/csrf-cookie'), {
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json' },
-  })
+async function csrfHeaders(refresh = false): Promise<Record<string, string>> {
+  let token = csrfToken()
 
-  if (!response.ok) {
-    throw new Error('Unable to initialize secure upload. Please try again.')
+  if (refresh || !token) {
+    const response = await fetch(url('sanctum/csrf-cookie'), {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        'Unable to initialize a secure request. Please try again.',
+      )
+    }
+
+    token = csrfToken()
   }
-
-  const token = csrfToken()
 
   return token ? { 'X-XSRF-TOKEN': token } : {}
 }
@@ -96,7 +115,7 @@ export async function listDocuments(): Promise<DocumentRecord[]> {
 }
 
 export async function uploadDocument(file: File): Promise<DocumentRecord> {
-  const headers = await csrfHeaders()
+  const headers = await csrfHeaders(true)
   const body = new FormData()
   body.append('file', file)
 
@@ -113,12 +132,27 @@ export async function uploadDocument(file: File): Promise<DocumentRecord> {
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
-  const headers = await csrfHeaders()
+  const headers = await csrfHeaders(true)
 
   await jsonRequest(`api/public/documents/${documentId}`, {
     method: 'DELETE',
     headers,
   })
+}
+
+export async function startDocumentIngestion(
+  documentId: string,
+): Promise<IngestionReceipt> {
+  const headers = await csrfHeaders()
+  const payload = await jsonRequest<{ data: IngestionReceipt }>(
+    `api/public/documents/${documentId}/ingestions`,
+    {
+      method: 'POST',
+      headers,
+    },
+  )
+
+  return payload.data
 }
 
 export function documentSourceUrl(documentId: string): string {

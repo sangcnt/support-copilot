@@ -5,6 +5,7 @@ use App\Http\Controllers\AdminConversationController;
 use App\Http\Controllers\AdminDocumentController;
 use App\Http\Controllers\AdminUsageController;
 use App\Http\Controllers\PublicDocumentController;
+use App\Http\Controllers\PublicDocumentIngestionController;
 use App\Http\Controllers\PublicSessionController;
 use Illuminate\Support\Facades\Route;
 
@@ -26,6 +27,8 @@ Route::prefix('public')->group(function (): void {
     Route::get('/documents/{document}/source', [PublicDocumentController::class, 'source'])
         ->middleware('document.access');
     Route::delete('/documents/{document}', [PublicDocumentController::class, 'destroy'])
+        ->middleware(['anonymous.session', 'document.owner']);
+    Route::post('/documents/{document}/ingestions', PublicDocumentIngestionController::class)
         ->middleware(['anonymous.session', 'document.owner']);
 });
 

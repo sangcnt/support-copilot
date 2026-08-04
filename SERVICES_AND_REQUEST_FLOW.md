@@ -36,7 +36,7 @@ private application network.
 | React SPA | `frontend/` | Public upload workspace, PDF preview, and static admin preview |
 | Laravel API | `backend/` | Anonymous sessions, authorization, PDF lifecycle, admin API, and application records |
 | Laravel queue worker | Shared code in `backend/` | Runs the Redis worker; no ingestion job exists yet |
-| FastAPI AI service | `ai-service/` | Currently exposes health only; parsing, RAG, and LLM workflows are not implemented |
+| FastAPI AI service | `ai-service/` | Receives an internal PDF handoff and returns debug metadata; parsing, RAG, and LLM workflows are not implemented |
 | Nginx | `infrastructure/nginx/` | Builds and serves the React bundle and forwards `/api/*` and `/sanctum/*` to PHP-FPM |
 | PHP-FPM image | `infrastructure/php/` | Laravel runtime and file-upload limits |
 | PostgreSQL initialization | `infrastructure/postgres/` | Enables pgvector; Laravel migrations manage application tables |
@@ -53,7 +53,7 @@ private application network.
 | `nginx` | Nginx and React production build | Yes | Stateless |
 | `backend` | PHP-FPM and Laravel | No | Shared private PDF mount |
 | `queue` | Laravel queue worker | No | Shared private PDF mount |
-| `ai-service` | Uvicorn and FastAPI | No | No application state yet |
+| `ai-service` | Uvicorn and FastAPI | Development loopback only | No application state yet |
 | `postgres` | PostgreSQL and pgvector | No | `postgres_data` named volume |
 | `redis` | Redis with AOF | No | `redis_data` named volume |
 | `frontend` | Optional Vite tool container | No | `frontend_node_modules` named volume |
@@ -146,6 +146,7 @@ is in [`frontend/src/api.ts`](frontend/src/api.ts).
 | `GET` | `/demo/support-copilot/api/public/documents/{document}` | `/api/public/documents/{document}` | Return authorized document metadata |
 | `GET` | `/demo/support-copilot/api/public/documents/{document}/source` | `/api/public/documents/{document}/source` | Stream the authorized original PDF inline |
 | `DELETE` | `/demo/support-copilot/api/public/documents/{document}` | `/api/public/documents/{document}` | Delete an owned document and its source |
+| `POST` | `/demo/support-copilot/api/public/documents/{document}/ingestions` | `/api/public/documents/{document}/ingestions` | Send an owned PDF to the internal AI service |
 | `GET` | `/demo/support-copilot/sanctum/csrf-cookie` | `/sanctum/csrf-cookie` | Initialize Sanctum CSRF protection before mutations |
 
 #### Upload request
@@ -172,6 +173,28 @@ A new upload returns `201 Created`. An identical source already available in
 the same anonymous session returns the existing document with `200 OK` and
 `meta.duplicate = true`.
 
+#### Ingestion handoff request
+
+The browser sends an empty, CSRF-protected `POST` to Laravel after upload. It
+does not send the PDF to FastAPI directly:
+
+```http
+POST /api/public/documents/{document}/ingestions
+Accept: application/json
+X-XSRF-TOKEN: <token from the XSRF-TOKEN cookie>
+```
+
+After ownership checks, Laravel sends this internal multipart request:
+
+```text
+file=<authorized PDF binary>
+document_version_id=<document_versions.id>
+checksum=<document_versions.content_checksum>
+```
+
+The current response is a development receipt containing filename, byte size,
+PDF signature, calculated SHA-256, and whether it matches Laravel's checksum.
+
 ### 5.2 Administrator API
 
 The Laravel endpoints below exist, but the React `Admin preview` is still a
@@ -197,9 +220,11 @@ Sanctum authentication and administrator authorization.
 | Method | Internal path | Status |
 |---|---|---|
 | `GET` | `/health` | Implemented for internal health checks |
+| `POST` | `/internal/ingestions` | Receives multipart PDF data and returns a debug receipt; no processing or persistence yet |
 
-FastAPI is not exposed to the browser. Parsing, retrieval, and generation
-routes have not been implemented or named.
+FastAPI is not exposed through the public application. Its Swagger UI is
+available on a development-only loopback listener at `/docs`. Parsing,
+retrieval, and generation routes have not been implemented or named.
 
 ## 6. Current guest flow
 
@@ -211,6 +236,7 @@ sequenceDiagram
     participant API as Laravel API
     participant DB as PostgreSQL
     participant Files as Private PDF storage
+    participant AI as FastAPI
 
     User->>Nginx: GET /demo/support-copilot/
     Nginx-->>User: React production bundle
@@ -233,6 +259,13 @@ sequenceDiagram
     API->>Files: Read original PDF
     API-->>UI: Inline application/pdf response
     UI-->>User: Render PDF preview
+    UI->>API: POST /api/public/documents/{id}/ingestions
+    API->>Files: Open the authorized private PDF
+    API->>AI: POST /internal/ingestions (multipart PDF)
+    AI->>AI: Inspect size, signature, and SHA-256 only
+    AI-->>API: 202 debug receipt
+    API-->>UI: 202 debug receipt
+    UI-->>User: Keep preview visible and show handoff debug data
 ```
 
 ### 6.1 Opening the demo
@@ -268,9 +301,25 @@ sequenceDiagram
 8. Laravel creates:
    - a `documents` record with `pending_ingestion` status;
    - a version 1 `document_versions` record with `pending` ingestion status.
-9. No queue ingestion job, Python call, embedding, or OpenAI call occurs yet.
+9. This first request returns before any Python call, so the PDF preview can be
+   rendered immediately.
 
-### 6.3 Previewing a PDF
+### 6.3 Handing the PDF to FastAPI
+
+1. After upload succeeds, React starts a separate
+   `POST /api/public/documents/{document}/ingestions` request.
+2. The preview remains available while the second request is in progress.
+3. Laravel verifies exact anonymous-session ownership, opens the private PDF,
+   and sends it to `POST /internal/ingestions` as multipart data with the
+   document-version ID and Laravel checksum.
+4. FastAPI reads the source in bounded blocks, verifies the `%PDF-` signature,
+   calculates SHA-256, and returns a `202 Accepted` debug receipt.
+5. FastAPI does not store the source and does not parse, chunk, embed, or call a
+   model in this slice.
+6. Laravel does not change `pending_ingestion` or `pending`; the UI shows the
+   receipt while chat remains locked.
+
+### 6.4 Previewing a PDF
 
 1. React renders an iframe using
    `GET /api/public/documents/{document}/source`.
@@ -281,7 +330,7 @@ sequenceDiagram
 4. The browser displays the raw original PDF. Processed blocks, OCR, and
    citation highlighting do not exist yet.
 
-### 6.4 Deleting a PDF
+### 6.5 Deleting a PDF
 
 1. React asks for confirmation.
 2. React initializes CSRF protection and calls
@@ -290,7 +339,7 @@ sequenceDiagram
 4. Laravel soft-deletes the document record and deletes the physical source.
 5. React returns to the empty upload state.
 
-### 6.5 Asking a question today
+### 6.6 Asking a question today
 
 An uploaded document remains `pending_ingestion`, so the chat composer stays
 locked and displays `Awaiting ingestion`.
@@ -299,7 +348,7 @@ The current application does not yet:
 
 - expose a public chat endpoint;
 - create conversations or messages;
-- call FastAPI for document processing;
+- parse or persist document content in FastAPI;
 - create query or chunk embeddings;
 - query pgvector;
 - call an answer model;
@@ -353,8 +402,6 @@ sequenceDiagram
 
 | Capability | Public or internal endpoint | Status |
 |---|---|---|
-| Dispatch ingestion after upload | — | Not implemented |
-| Laravel worker to FastAPI ingestion | — | API contract not defined |
 | Parsed block and chunk inspection | — | Not implemented |
 | Retrieval inspection | — | Not implemented |
 | Create or continue a public conversation | — | Not implemented |
@@ -376,7 +423,7 @@ FastAPI and model providers remain private.
 |---|---|---|
 | Open demo | `anonymous_sessions` | None |
 | Upload PDF | Private PDF, `documents`, and `document_versions` | None |
-| Ingestion | Not implemented | Ingestion operation, normalized blocks, `chunks`, and vectors |
+| Ingestion handoff | FastAPI debug receipt only; not persisted | Normalized blocks, `chunks`, and vectors |
 | Ask question | Not implemented | `conversations` and user `messages` |
 | Generate answer | Not implemented | Assistant `messages`, `message_citations`, and `usage_events` |
 | Feedback and handoff | Not implemented | Feedback and conversation support state |
@@ -395,12 +442,14 @@ Implemented
   private PDF storage
   document and version metadata
   authorized list, show, preview, and delete
+  separate Laravel-to-FastAPI PDF handoff
+  FastAPI Swagger and ingestion debug receipt
   static administrator preview
   protected administrator Laravel API
 
 Not implemented
   administrator login UI
-  ingestion queue job
+  asynchronous ingestion queue job
   PDF parser and OCR
   chunking
   embeddings

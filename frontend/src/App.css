@@ -1283,6 +1283,61 @@ textarea:focus-visible {
   line-height: 1.55;
 }
 
+.ingestion-action {
+  margin-top: 16px;
+  border: 1px solid #3a7a69;
+  border-radius: 9px;
+  padding: 9px 13px;
+  color: #b9eadc;
+  background: #142a25;
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.ingestion-action:hover {
+  border-color: #50a58d;
+  background: #19342d;
+}
+
+.ingestion-debug {
+  width: min(430px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 20px 0 0;
+  text-align: left;
+}
+
+.ingestion-debug > div {
+  min-width: 0;
+  border: 1px solid #293543;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #101721;
+}
+
+.ingestion-debug dt {
+  color: #647284;
+  font-size: 0.54rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ingestion-debug dd {
+  overflow-wrap: anywhere;
+  margin: 4px 0 0;
+  color: #bdc7d2;
+  font-size: 0.61rem;
+  line-height: 1.45;
+}
+
+.ingestion-debug__hash {
+  grid-column: 1 / -1;
+}
+
 .assistant-avatar {
   width: 36px;
   height: 36px;

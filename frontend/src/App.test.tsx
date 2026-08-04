@@ -62,7 +62,7 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('uploads and previews a PDF while chat waits for ingestion', async () => {
+  it('keeps the PDF preview available while the second request ingests it', async () => {
     const uploadedDocument = {
       id: 'document-1',
       display_name: 'policy.pdf',
@@ -79,6 +79,10 @@ describe('App', () => {
       },
       created_at: '2026-07-31T00:00:00Z',
     }
+    let completeIngestion: ((response: Response) => void) | undefined
+    const ingestionResponse = new Promise<Response>((resolve) => {
+      completeIngestion = resolve
+    })
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const requestUrl = String(input)
 
@@ -91,6 +95,13 @@ describe('App', () => {
         init?.method === 'POST'
       ) {
         return jsonResponse({ data: uploadedDocument }, 201)
+      }
+
+      if (
+        requestUrl.endsWith('api/public/documents/document-1/ingestions') &&
+        init?.method === 'POST'
+      ) {
+        return ingestionResponse
       }
 
       if (requestUrl.endsWith('api/public/documents')) {
@@ -116,16 +127,46 @@ describe('App', () => {
     expect(
       await screen.findByTitle('Preview of policy.pdf'),
     ).toBeInTheDocument()
-    expect(screen.getByText('PDF uploaded securely')).toBeInTheDocument()
-    expect(screen.getAllByText('Awaiting ingestion')).toHaveLength(2)
+    expect(
+      screen.getByText('Sending PDF to the AI service'),
+    ).toBeInTheDocument()
+    expect(screen.getAllByText('Ingesting')).toHaveLength(2)
     expect(
       screen.queryByRole('textbox', { name: 'Ask about this document' }),
     ).not.toBeInTheDocument()
+
+    completeIngestion?.(
+      (await jsonResponse({
+        data: {
+          status: 'received',
+          document_version_id: 'version-1',
+          file: {
+            filename: 'policy.pdf',
+            content_type: 'application/pdf',
+            byte_size: 1024,
+            sha256: 'checksum',
+            checksum_matches: true,
+            pdf_signature: '%PDF-',
+          },
+        },
+      })) as Response,
+    )
+
+    expect(
+      await screen.findByText('PDF received by the AI service'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Match')).toBeInTheDocument()
+    expect(screen.getByText('%PDF-')).toBeInTheDocument()
+    expect(screen.getAllByText('Source received')).toHaveLength(2)
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('api/public/documents'),
         expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
+      )
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('api/public/documents/document-1/ingestions'),
+        expect.objectContaining({ method: 'POST' }),
       )
     })
   })

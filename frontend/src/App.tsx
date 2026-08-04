@@ -4,8 +4,10 @@ import {
   documentSourceUrl,
   listDocuments,
   startAnonymousSession,
+  startDocumentIngestion,
   uploadDocument,
   type DocumentRecord,
+  type IngestionReceipt,
 } from './api'
 import './App.css'
 
@@ -138,6 +140,8 @@ function SourcePanel({
   document,
   initializing,
   uploading,
+  ingesting,
+  sourceReceived,
   error,
   onFileSelected,
   onRemove,
@@ -145,6 +149,8 @@ function SourcePanel({
   document: DocumentRecord | null
   initializing: boolean
   uploading: boolean
+  ingesting: boolean
+  sourceReceived: boolean
   error: string | null
   onFileSelected: (file: File) => void
   onRemove: () => void
@@ -168,7 +174,7 @@ function SourcePanel({
             <button
               className="source-remove"
               type="button"
-              disabled={uploading}
+              disabled={uploading || ingesting}
               onClick={onRemove}
             >
               Remove
@@ -184,7 +190,13 @@ function SourcePanel({
             <strong>{document.display_name}</strong>
             <span>{size} · Stored privately</span>
           </div>
-          <span className="waiting-badge">Awaiting ingestion</span>
+          <span className="waiting-badge">
+            {ingesting
+              ? 'Ingesting'
+              : sourceReceived
+                ? 'Source received'
+                : 'Awaiting ingestion'}
+          </span>
         </div>
 
         {error && (
@@ -246,7 +258,19 @@ function SourcePanel({
   )
 }
 
-function ChatPanel({ document }: { document: DocumentRecord | null }) {
+function ChatPanel({
+  document,
+  ingesting,
+  ingestionReceipt,
+  ingestionError,
+  onStartIngestion,
+}: {
+  document: DocumentRecord | null
+  ingesting: boolean
+  ingestionReceipt: IngestionReceipt | null
+  ingestionError: string | null
+  onStartIngestion: () => void
+}) {
   const [draft, setDraft] = useState('')
   const [submittedQuestion, setSubmittedQuestion] = useState<string | null>(
     null,
@@ -293,6 +317,14 @@ function ChatPanel({ document }: { document: DocumentRecord | null }) {
   }
 
   if (document.status !== 'ready') {
+    const state = ingesting
+      ? 'ingesting'
+      : ingestionError
+        ? 'error'
+        : ingestionReceipt
+          ? 'received'
+          : 'idle'
+
     return (
       <section className="workspace-panel chat-panel" aria-label="Support chat">
         <header className="panel-header chat-panel__header">
@@ -304,18 +336,94 @@ function ChatPanel({ document }: { document: DocumentRecord | null }) {
             <span className="panel-header__label">Document assistant</span>
             <h2>Ask your PDF</h2>
           </div>
-          <span className="waiting-badge">Awaiting ingestion</span>
+          <span className="waiting-badge">
+            {state === 'ingesting'
+              ? 'Ingesting'
+              : state === 'received'
+                ? 'Source received'
+                : 'Awaiting ingestion'}
+          </span>
         </header>
 
-        <div className="chat-locked">
+        <div className="chat-locked" aria-live="polite">
           <span className="chat-locked__mark" aria-hidden="true">
-            ✓
+            {state === 'ingesting' ? '↻' : state === 'error' ? '!' : '✓'}
           </span>
-          <strong>PDF uploaded securely</strong>
-          <p>
-            Preview is available now. Chat will unlock after document processing
-            is connected.
-          </p>
+          {state === 'ingesting' && (
+            <>
+              <strong>Sending PDF to the AI service</strong>
+              <p>
+                The private source is being handed off now. You can keep using
+                the PDF preview while this request runs.
+              </p>
+            </>
+          )}
+          {state === 'error' && (
+            <>
+              <strong>AI service did not receive the PDF</strong>
+              <p>{ingestionError}</p>
+              <button
+                type="button"
+                className="ingestion-action"
+                onClick={onStartIngestion}
+              >
+                Try again
+              </button>
+            </>
+          )}
+          {state === 'received' && ingestionReceipt && (
+            <>
+              <strong>PDF received by the AI service</strong>
+              <p>
+                The handoff is working. Parsing, chunks, and embeddings are the
+                next implementation steps, so chat remains locked for now.
+              </p>
+              <dl className="ingestion-debug">
+                <div>
+                  <dt>File</dt>
+                  <dd>{ingestionReceipt.file.filename}</dd>
+                </div>
+                <div>
+                  <dt>Bytes</dt>
+                  <dd>{ingestionReceipt.file.byte_size.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt>PDF signature</dt>
+                  <dd>{ingestionReceipt.file.pdf_signature}</dd>
+                </div>
+                <div>
+                  <dt>Checksum</dt>
+                  <dd>
+                    {ingestionReceipt.file.checksum_matches === null
+                      ? 'Not supplied'
+                      : ingestionReceipt.file.checksum_matches
+                        ? 'Match'
+                        : 'Mismatch'}
+                  </dd>
+                </div>
+                <div className="ingestion-debug__hash">
+                  <dt>SHA-256</dt>
+                  <dd>{ingestionReceipt.file.sha256}</dd>
+                </div>
+              </dl>
+            </>
+          )}
+          {state === 'idle' && (
+            <>
+              <strong>PDF uploaded securely</strong>
+              <p>
+                Preview is available now. Send the source to the AI service to
+                inspect the ingestion handoff.
+              </p>
+              <button
+                type="button"
+                className="ingestion-action"
+                onClick={onStartIngestion}
+              >
+                Send to AI service
+              </button>
+            </>
+          )}
         </div>
       </section>
     )
@@ -430,6 +538,10 @@ function PublicDemo() {
   const [initializing, setInitializing] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [documentError, setDocumentError] = useState<string | null>(null)
+  const [ingesting, setIngesting] = useState(false)
+  const [ingestionReceipt, setIngestionReceipt] =
+    useState<IngestionReceipt | null>(null)
+  const [ingestionError, setIngestionError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -468,6 +580,25 @@ function PublicDemo() {
     }
   }, [])
 
+  const ingestDocument = async (target: DocumentRecord) => {
+    setIngesting(true)
+    setIngestionReceipt(null)
+    setIngestionError(null)
+
+    try {
+      const receipt = await startDocumentIngestion(target.id)
+      setIngestionReceipt(receipt)
+    } catch (error) {
+      setIngestionError(
+        error instanceof Error
+          ? error.message
+          : 'The AI service could not receive this PDF.',
+      )
+    } finally {
+      setIngesting(false)
+    }
+  }
+
   const handleUpload = async (file: File) => {
     setDocumentError(null)
 
@@ -489,6 +620,8 @@ function PublicDemo() {
     try {
       const uploaded = await uploadDocument(file)
       setDocument(uploaded)
+      setUploading(false)
+      void ingestDocument(uploaded)
     } catch (error) {
       setDocumentError(
         error instanceof Error ? error.message : 'The PDF upload failed.',
@@ -512,6 +645,8 @@ function PublicDemo() {
     try {
       await deleteDocument(document.id)
       setDocument(null)
+      setIngestionReceipt(null)
+      setIngestionError(null)
     } catch (error) {
       setDocumentError(
         error instanceof Error ? error.message : 'Unable to remove the PDF.',
@@ -562,6 +697,8 @@ function PublicDemo() {
             document={document}
             initializing={initializing}
             uploading={uploading}
+            ingesting={ingesting}
+            sourceReceived={ingestionReceipt !== null}
             error={documentError}
             onFileSelected={(file) => void handleUpload(file)}
             onRemove={() => void handleRemove()}
@@ -574,7 +711,17 @@ function PublicDemo() {
           role="tabpanel"
           aria-labelledby="chat-tab"
         >
-          <ChatPanel document={document} />
+          <ChatPanel
+            document={document}
+            ingesting={ingesting}
+            ingestionReceipt={ingestionReceipt}
+            ingestionError={ingestionError}
+            onStartIngestion={() => {
+              if (document) {
+                void ingestDocument(document)
+              }
+            }}
+          />
         </div>
       </main>
     </>

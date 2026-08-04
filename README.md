@@ -53,8 +53,10 @@ The repository foundation, public product shell, core Laravel domain model,
 anonymous document ownership, administrator API, automated checks, and live
 container topology are in place. Visitors can now upload a PDF into private
 storage, restore it within their anonymous session, preview it through an
-authorized source endpoint, and remove it. Asynchronous ingestion, retrieval,
-and live chat are being delivered incrementally.
+authorized source endpoint, and remove it. A separate request now hands the
+authorized PDF from Laravel to FastAPI and exposes a development debug receipt.
+Parsing, asynchronous processing, retrieval, and live chat are being delivered
+incrementally.
 
 ## Live demo
 
