@@ -80,6 +80,15 @@ export type IngestionReceipt = {
       }>
     }>
   }
+  embedding: {
+    provider: string
+    model: string
+    batch_size: number
+    batch_count: number
+    embedding_count: number
+    dimensions: number
+    input_tokens: number
+  }
 }
 
 type ErrorEnvelope = {

@@ -56,8 +56,9 @@ storage, restore it within their anonymous session, preview it through an
 authorized source endpoint, and remove it. A separate request now hands the
 authorized PDF from Laravel to FastAPI, which extracts normalized text and
 page/line coordinates, then creates deterministic token-aware chunks with
-traceable source ranges for development inspection. Persistence, embeddings,
-asynchronous processing, retrieval, and live chat are being delivered incrementally.
+traceable source ranges and generates bounded batches of OpenAI embeddings for
+development inspection. Persistence, asynchronous processing, retrieval, and
+live chat are being delivered incrementally.
 
 ## Live demo
 

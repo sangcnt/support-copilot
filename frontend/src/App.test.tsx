@@ -184,18 +184,29 @@ describe('App', () => {
               },
             ],
           },
+          embedding: {
+            provider: 'openai',
+            model: 'text-embedding-3-small',
+            batch_size: 32,
+            batch_count: 1,
+            embedding_count: 1,
+            dimensions: 1536,
+            input_tokens: 11,
+          },
         },
       })) as Response,
     )
 
     expect(
-      await screen.findByText('PDF parsed and chunked by the AI service'),
+      await screen.findByText('PDF parsed, chunked, and embedded'),
     ).toBeInTheDocument()
     expect(screen.getByText('Match')).toBeInTheDocument()
     expect(screen.getByText('%PDF-')).toBeInTheDocument()
     expect(screen.getAllByText('Chunked')).toHaveLength(2)
     expect(screen.getByText('First chunk preview')).toBeInTheDocument()
     expect(screen.getByText('cl100k_base')).toBeInTheDocument()
+    expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument()
+    expect(screen.getByText('1536')).toBeInTheDocument()
     expect(
       screen.getByText(
         'Refund policy Customers may request a refund within 30 days.',

@@ -1,13 +1,20 @@
 import hashlib
 import logging
+from functools import lru_cache
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from support_copilot_ai.config import get_settings
 from support_copilot_ai.document_chunker import ChunkedDocument, DocumentChunker
+from support_copilot_ai.document_embedder import (
+    DocumentEmbedder,
+    DocumentEmbeddingError,
+    EmbeddingSummary,
+)
 from support_copilot_ai.pdf_parser import ParsedDocument, PdfParser, PdfParsingError
 
 
@@ -31,6 +38,7 @@ class IngestionReceipt(BaseModel):
     file: ReceivedFileDebug
     parser: ParsedDocument
     chunking: ChunkedDocument
+    embedding: EmbeddingSummary
 
 
 settings = get_settings()
@@ -40,13 +48,37 @@ logger.setLevel(settings.log_level.upper())
 MAX_PDF_BYTES = 10 * 1024 * 1024
 READ_BLOCK_BYTES = 1024 * 1024
 
+
+@lru_cache
+def get_document_embedder() -> DocumentEmbedder | None:
+    api_key = settings.openai_api_key
+
+    if settings.provider.lower() != "openai" or api_key is None:
+        return None
+
+    revealed_key = api_key.get_secret_value().strip()
+
+    if not revealed_key:
+        return None
+
+    return DocumentEmbedder(
+        client=AsyncOpenAI(
+            api_key=revealed_key,
+            timeout=30.0,
+            max_retries=2,
+        ),
+        model=settings.openai_embedding_model,
+        batch_size=settings.embedding_batch_size,
+    )
+
+
 app = FastAPI(
     title="Support Copilot AI Service",
     description=(
         "Internal AI workflow API. The ingestion endpoint receives a PDF and "
         "extracts normalized text with page and line metadata, then creates "
-        "deterministic token-aware chunks. Embeddings and persistence are not "
-        "implemented yet."
+        "deterministic token-aware chunks and batched embeddings. Persistence "
+        "is not implemented yet."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -77,6 +109,7 @@ async def receive_ingestion(
             description="Optional SHA-256 supplied by the calling service",
         ),
     ] = None,
+    embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
 ) -> IngestionReceipt:
     """Orchestrate the ingestion pipeline for one document version.
 
@@ -84,8 +117,9 @@ async def receive_ingestion(
     for each step belongs in focused parser, chunker, embedding, and repository
     services so this HTTP handler remains easy to follow and test.
 
-    Currently implemented: source receipt/validation, step 3 (PDF parsing), and
-    step 4 (deterministic chunking). Steps 5-8 remain intentionally unimplemented.
+    Currently implemented: source receipt/validation, step 3 (PDF parsing), step
+    4 (deterministic chunking), and step 5 (batched embeddings). Steps 6-8 remain
+    intentionally unimplemented.
     """
 
     # Steps 1-2 (implemented): receive the authorized PDF source and validate the
@@ -145,8 +179,29 @@ async def receive_ingestion(
         parsed_document,
     )
 
+    # Step 5 (implemented): create one embedding per chunk in bounded batches.
+    # The full vectors remain in memory for the future persistence step; this
+    # development receipt only exposes counts and dimensions to keep it compact.
+    if embedder is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The embedding provider is not configured.",
+        )
+
+    try:
+        embedded_document = await embedder.embed(chunked_document)
+    except DocumentEmbeddingError as exception:
+        logger.exception(
+            "Unable to embed ingestion document_version_id=%s filename=%r",
+            document_version_id,
+            file.filename,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The document could not be embedded.",
+        ) from exception
+
     # Planned pipeline continuation (not implemented in this step):
-    # Step 5: generate embeddings in size-limited batches.
     # Step 6: persist chunks, embeddings, and metadata in one transaction.
     # Step 7: mark the document version as ready only after persistence succeeds.
     # Step 8: on failure, persist a safe user-facing reason separately from the
@@ -176,4 +231,5 @@ async def receive_ingestion(
         ),
         parser=parsed_document,
         chunking=chunked_document,
+        embedding=EmbeddingSummary.from_document(embedded_document),
     )

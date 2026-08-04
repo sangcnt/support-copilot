@@ -3,8 +3,30 @@ import hashlib
 
 from httpx import ASGITransport, AsyncClient
 
-from support_copilot_ai.main import app
+from support_copilot_ai.document_embedder import ChunkEmbedding, EmbeddedDocument
+from support_copilot_ai.main import app, get_document_embedder
 from tests.pdf_factory import build_text_pdf
+
+
+class StubDocumentEmbedder:
+    async def embed(self, document):
+        return EmbeddedDocument(
+            provider="openai",
+            model="text-embedding-3-small",
+            batch_size=32,
+            batch_count=1,
+            embedding_count=document.chunk_count,
+            dimensions=3,
+            input_tokens=sum(chunk.token_count for chunk in document.chunks),
+            embeddings=[
+                ChunkEmbedding(
+                    chunk_ordinal=chunk.ordinal,
+                    chunk_checksum=chunk.checksum,
+                    vector=[0.1, 0.2, 0.3],
+                )
+                for chunk in document.chunks
+            ],
+        )
 
 
 def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
@@ -15,18 +37,23 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
 
     async def send_pdf():
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-        ) as client:
-            return await client.post(
-                "/internal/ingestions",
-                data={
-                    "document_version_id": "01K1EXAMPLEVERSION",
-                    "checksum": checksum,
-                },
-                files={"file": ("policy.pdf", pdf, "application/pdf")},
-            )
+        app.dependency_overrides[get_document_embedder] = StubDocumentEmbedder
+
+        try:
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                return await client.post(
+                    "/internal/ingestions",
+                    data={
+                        "document_version_id": "01K1EXAMPLEVERSION",
+                        "checksum": checksum,
+                    },
+                    files={"file": ("policy.pdf", pdf, "application/pdf")},
+                )
+        finally:
+            app.dependency_overrides.pop(get_document_embedder, None)
 
     response = asyncio.run(send_pdf())
 
@@ -56,6 +83,15 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
     assert payload["chunking"]["chunks"][0]["text"] == (
         "Refund policy\nCustomers may request a refund within 30 days."
     )
+    assert payload["embedding"] == {
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "batch_size": 32,
+        "batch_count": 1,
+        "embedding_count": 1,
+        "dimensions": 3,
+        "input_tokens": payload["chunking"]["chunks"][0]["token_count"],
+    }
 
 
 def test_ingestion_rejects_non_pdf_content() -> None:

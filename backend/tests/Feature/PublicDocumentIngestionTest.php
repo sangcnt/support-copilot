@@ -85,6 +85,15 @@ class PublicDocumentIngestionTest extends TestCase
                         'source_spans' => [],
                     ]],
                 ],
+                'embedding' => [
+                    'provider' => 'openai',
+                    'model' => 'text-embedding-3-small',
+                    'batch_size' => 32,
+                    'batch_count' => 1,
+                    'embedding_count' => 1,
+                    'dimensions' => 1536,
+                    'input_tokens' => 3,
+                ],
             ], 202),
         ]);
 
@@ -97,7 +106,10 @@ class PublicDocumentIngestionTest extends TestCase
             ->assertJsonPath('data.parser.page_count', 1)
             ->assertJsonPath('data.parser.normalized_text', 'Refund policy.')
             ->assertJsonPath('data.chunking.chunk_count', 1)
-            ->assertJsonPath('data.chunking.chunks.0.text', 'Refund policy.');
+            ->assertJsonPath('data.chunking.chunks.0.text', 'Refund policy.')
+            ->assertJsonPath('data.embedding.model', 'text-embedding-3-small')
+            ->assertJsonPath('data.embedding.embedding_count', 1)
+            ->assertJsonPath('data.embedding.dimensions', 1536);
 
         Http::assertSent(function (Request $request) use ($checksum, $version): bool {
             $parts = collect($request->data())->keyBy('name');

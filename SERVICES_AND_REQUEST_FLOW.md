@@ -36,7 +36,7 @@ private application network.
 | React SPA | `frontend/` | Public upload workspace, PDF preview, and static admin preview |
 | Laravel API | `backend/` | Anonymous sessions, authorization, PDF lifecycle, admin API, and application records |
 | Laravel queue worker | Shared code in `backend/` | Runs the Redis worker; no ingestion job exists yet |
-| FastAPI AI service | `ai-service/` | Validates PDFs, extracts normalized text and page/line coordinates, and creates deterministic token-aware chunks; embeddings, RAG, and LLM workflows are not implemented |
+| FastAPI AI service | `ai-service/` | Validates PDFs, extracts normalized text and page/line coordinates, creates deterministic token-aware chunks, and generates bounded batches of chunk embeddings; persistence, retrieval, and LLM answers are not implemented |
 | Nginx | `infrastructure/nginx/` | Builds and serves the React bundle and forwards `/api/*` and `/sanctum/*` to PHP-FPM |
 | PHP-FPM image | `infrastructure/php/` | Laravel runtime and file-upload limits |
 | PostgreSQL initialization | `infrastructure/postgres/` | Enables pgvector; Laravel migrations manage application tables |
@@ -264,9 +264,11 @@ sequenceDiagram
     API->>Files: Open the authorized private PDF
     API->>AI: POST /internal/ingestions (multipart PDF)
     AI->>AI: Validate, parse, and create deterministic chunks
-    AI-->>API: 202 parser and chunker receipt
-    API-->>UI: 202 parser and chunker receipt
-    UI-->>User: Keep preview visible and show chunk summary
+    AI->>Provider: Create bounded batches of chunk embeddings
+    Provider-->>AI: Embedding vectors and token usage
+    AI-->>API: 202 parser, chunker, and embedding summary
+    API-->>UI: 202 ingestion development receipt
+    UI-->>User: Keep preview visible and show processing summary
 ```
 
 ### 6.1 Opening the demo
@@ -323,10 +325,16 @@ sequenceDiagram
 7. Every chunk includes an ordinal, checksum, token count, source character
    range, page range, and compact page/line source spans. The complete chunk
    set also has a reproducible checksum and versioned configuration.
-8. The `202 Accepted` development receipt includes the parser and chunking
-   output. FastAPI does not persist either output and does not embed, run OCR,
-   or call a model in this slice.
-9. Laravel does not change `pending_ingestion` or `pending`; the UI shows a
+8. FastAPI sends at most 32 chunk texts per OpenAI Embeddings API request. It
+   validates that the provider returns exactly one same-sized vector per chunk
+   while retaining the ordinal and checksum needed by the persistence step.
+9. The `202 Accepted` development receipt includes parser/chunking output plus
+   an embedding summary with model, batch count, vector count, dimensions, and
+   input-token usage. Full vectors remain internal and are not serialized into
+   the receipt.
+10. FastAPI does not persist parser, chunk, or vector output and does not run
+    OCR in this slice.
+11. Laravel does not change `pending_ingestion` or `pending`; the UI shows a
    parser/chunker summary and first-chunk preview while chat remains locked.
 
 ### 6.4 Previewing a PDF
@@ -359,7 +367,7 @@ The current application does not yet:
 - expose a public chat endpoint;
 - create conversations or messages;
 - persist parser/chunker output or run OCR;
-- create query or chunk embeddings;
+- create query embeddings;
 - query pgvector;
 - call an answer model;
 - stream an answer; or
@@ -433,7 +441,7 @@ FastAPI and model providers remain private.
 |---|---|---|
 | Open demo | `anonymous_sessions` | None |
 | Upload PDF | Private PDF, `documents`, and `document_versions` | None |
-| Ingestion handoff | Normalized text, page/line metadata, and deterministic chunks in the response only | Persisted `chunks` and vectors |
+| Ingestion handoff | Normalized text and structural metadata, deterministic chunks, and non-persisted chunk embeddings | Persisted `chunks` and vectors |
 | Ask question | Not implemented | `conversations` and user `messages` |
 | Generate answer | Not implemented | Assistant `messages`, `message_citations`, and `usage_events` |
 | Feedback and handoff | Not implemented | Feedback and conversation support state |
@@ -456,6 +464,7 @@ Implemented
   FastAPI Swagger and ingestion debug receipt
   normalized PDF text and page/line structural metadata
   deterministic token-aware chunks with source ranges and checksums
+  bounded OpenAI chunk-embedding batches with response validation
   static administrator preview
   protected administrator Laravel API
 
@@ -463,7 +472,7 @@ Not implemented
   administrator login UI
   asynchronous ingestion queue job
   parser/chunker-output persistence and OCR
-  embeddings
+  persisted embeddings and query embeddings
   pgvector retrieval
   grounded generation
   streaming chat

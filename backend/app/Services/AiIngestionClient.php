@@ -26,7 +26,8 @@ class AiIngestionClient
      *         pdf_signature: string
      *     },
      *     parser: array<string, mixed>,
-     *     chunking: array<string, mixed>
+     *     chunking: array<string, mixed>,
+     *     embedding: array<string, mixed>
      * }
      */
     public function receive(Document $document): array
@@ -72,6 +73,7 @@ class AiIngestionClient
             || ! is_array($receipt['file'] ?? null)
             || ! is_array($receipt['parser'] ?? null)
             || ! is_array($receipt['chunking'] ?? null)
+            || ! is_array($receipt['embedding'] ?? null)
         ) {
             throw new RuntimeException('The AI service returned an invalid ingestion receipt.');
         }

@@ -373,10 +373,10 @@ function ChatPanel({
           )}
           {state === 'received' && ingestionReceipt && (
             <>
-              <strong>PDF parsed and chunked by the AI service</strong>
+              <strong>PDF parsed, chunked, and embedded</strong>
               <p>
-                Deterministic chunks and their source ranges are available.
-                Embeddings are the next step, so chat remains locked for now.
+                Chunk vectors are available in memory. Persistence is the next
+                step, so chat remains locked for now.
               </p>
               <dl className="ingestion-debug">
                 <div>
@@ -430,6 +430,26 @@ function ChatPanel({
                 <div>
                   <dt>Overlap tokens</dt>
                   <dd>{ingestionReceipt.chunking.overlap_tokens}</dd>
+                </div>
+                <div>
+                  <dt>Embedding model</dt>
+                  <dd>{ingestionReceipt.embedding.model}</dd>
+                </div>
+                <div>
+                  <dt>Embedding batches</dt>
+                  <dd>{ingestionReceipt.embedding.batch_count}</dd>
+                </div>
+                <div>
+                  <dt>Embedded chunks</dt>
+                  <dd>{ingestionReceipt.embedding.embedding_count}</dd>
+                </div>
+                <div>
+                  <dt>Vector dimensions</dt>
+                  <dd>{ingestionReceipt.embedding.dimensions}</dd>
+                </div>
+                <div>
+                  <dt>Embedding input tokens</dt>
+                  <dd>{ingestionReceipt.embedding.input_tokens}</dd>
                 </div>
                 <div>
                   <dt>Extractable text</dt>
