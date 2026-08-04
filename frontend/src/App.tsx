@@ -141,7 +141,7 @@ function SourcePanel({
   initializing,
   uploading,
   ingesting,
-  sourceParsed,
+  sourceChunked,
   error,
   onFileSelected,
   onRemove,
@@ -150,7 +150,7 @@ function SourcePanel({
   initializing: boolean
   uploading: boolean
   ingesting: boolean
-  sourceParsed: boolean
+  sourceChunked: boolean
   error: string | null
   onFileSelected: (file: File) => void
   onRemove: () => void
@@ -193,8 +193,8 @@ function SourcePanel({
           <span className="waiting-badge">
             {ingesting
               ? 'Ingesting'
-              : sourceParsed
-                ? 'Parsed'
+              : sourceChunked
+                ? 'Chunked'
                 : 'Awaiting ingestion'}
           </span>
         </div>
@@ -340,7 +340,7 @@ function ChatPanel({
             {state === 'ingesting'
               ? 'Ingesting'
               : state === 'received'
-                ? 'Parsed'
+                ? 'Chunked'
                 : 'Awaiting ingestion'}
           </span>
         </header>
@@ -373,10 +373,10 @@ function ChatPanel({
           )}
           {state === 'received' && ingestionReceipt && (
             <>
-              <strong>PDF parsed by the AI service</strong>
+              <strong>PDF parsed and chunked by the AI service</strong>
               <p>
-                Normalized text and page structure are available. Chunking and
-                embeddings are the next steps, so chat remains locked for now.
+                Deterministic chunks and their source ranges are available.
+                Embeddings are the next step, so chat remains locked for now.
               </p>
               <dl className="ingestion-debug">
                 <div>
@@ -416,6 +416,22 @@ function ChatPanel({
                   <dd>{ingestionReceipt.parser.line_count.toLocaleString()}</dd>
                 </div>
                 <div>
+                  <dt>Chunks</dt>
+                  <dd>{ingestionReceipt.chunking.chunk_count}</dd>
+                </div>
+                <div>
+                  <dt>Tokenizer</dt>
+                  <dd>{ingestionReceipt.chunking.tokenizer}</dd>
+                </div>
+                <div>
+                  <dt>Target tokens</dt>
+                  <dd>{ingestionReceipt.chunking.target_tokens}</dd>
+                </div>
+                <div>
+                  <dt>Overlap tokens</dt>
+                  <dd>{ingestionReceipt.chunking.overlap_tokens}</dd>
+                </div>
+                <div>
                   <dt>Extractable text</dt>
                   <dd>
                     {ingestionReceipt.parser.has_extractable_text
@@ -429,10 +445,10 @@ function ChatPanel({
                 </div>
               </dl>
               <div className="parser-preview">
-                <span>Normalized text preview</span>
-                {ingestionReceipt.parser.has_extractable_text ? (
+                <span>First chunk preview</span>
+                {ingestionReceipt.chunking.chunks[0] ? (
                   <pre>
-                    {ingestionReceipt.parser.normalized_text.slice(0, 700)}
+                    {ingestionReceipt.chunking.chunks[0].text.slice(0, 700)}
                   </pre>
                 ) : (
                   <p>
@@ -733,7 +749,7 @@ function PublicDemo() {
             initializing={initializing}
             uploading={uploading}
             ingesting={ingesting}
-            sourceParsed={ingestionReceipt !== null}
+            sourceChunked={ingestionReceipt !== null}
             error={documentError}
             onFileSelected={(file) => void handleUpload(file)}
             onRemove={() => void handleRemove()}

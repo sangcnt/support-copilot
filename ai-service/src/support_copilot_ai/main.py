@@ -7,6 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from support_copilot_ai.config import get_settings
+from support_copilot_ai.document_chunker import ChunkedDocument, DocumentChunker
 from support_copilot_ai.pdf_parser import ParsedDocument, PdfParser, PdfParsingError
 
 
@@ -29,6 +30,7 @@ class IngestionReceipt(BaseModel):
     document_version_id: str
     file: ReceivedFileDebug
     parser: ParsedDocument
+    chunking: ChunkedDocument
 
 
 settings = get_settings()
@@ -42,8 +44,9 @@ app = FastAPI(
     title="Support Copilot AI Service",
     description=(
         "Internal AI workflow API. The ingestion endpoint receives a PDF and "
-        "extracts normalized text with page and line metadata. Chunking, embeddings, "
-        "and persistence are not implemented yet."
+        "extracts normalized text with page and line metadata, then creates "
+        "deterministic token-aware chunks. Embeddings and persistence are not "
+        "implemented yet."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -81,8 +84,8 @@ async def receive_ingestion(
     for each step belongs in focused parser, chunker, embedding, and repository
     services so this HTTP handler remains easy to follow and test.
 
-    Currently implemented: source receipt/validation and step 3 (PDF parsing).
-    Steps 4-8 remain intentionally unimplemented.
+    Currently implemented: source receipt/validation, step 3 (PDF parsing), and
+    step 4 (deterministic chunking). Steps 5-8 remain intentionally unimplemented.
     """
 
     # Steps 1-2 (implemented): receive the authorized PDF source and validate the
@@ -135,8 +138,14 @@ async def receive_ingestion(
             detail="The PDF could not be parsed.",
         ) from exception
 
+    # Step 4 (implemented): create deterministic, token-aware chunks while
+    # retaining source offsets and page/line references for later citations.
+    chunked_document = await run_in_threadpool(
+        DocumentChunker().chunk,
+        parsed_document,
+    )
+
     # Planned pipeline continuation (not implemented in this step):
-    # Step 4: create deterministic chunks from parsed_document.
     # Step 5: generate embeddings in size-limited batches.
     # Step 6: persist chunks, embeddings, and metadata in one transaction.
     # Step 7: mark the document version as ready only after persistence succeeds.
@@ -166,4 +175,5 @@ async def receive_ingestion(
             pdf_signature=signature.decode("ascii"),
         ),
         parser=parsed_document,
+        chunking=chunked_document,
     )

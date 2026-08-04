@@ -49,6 +49,13 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
     assert payload["parser"]["normalized_text"] == (
         "Refund policy\nCustomers may request a refund within 30 days."
     )
+    assert payload["chunking"]["chunker_version"] == "line-token-v1"
+    assert payload["chunking"]["tokenizer"] == "cl100k_base"
+    assert payload["chunking"]["chunk_count"] == 1
+    assert payload["chunking"]["chunks"][0]["ordinal"] == 0
+    assert payload["chunking"]["chunks"][0]["text"] == (
+        "Refund policy\nCustomers may request a refund within 30 days."
+    )
 
 
 def test_ingestion_rejects_non_pdf_content() -> None:

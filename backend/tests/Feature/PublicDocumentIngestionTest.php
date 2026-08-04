@@ -63,6 +63,28 @@ class PublicDocumentIngestionTest extends TestCase
                     'normalized_text' => 'Refund policy.',
                     'pages' => [],
                 ],
+                'chunking' => [
+                    'chunker_version' => 'line-token-v1',
+                    'tokenizer' => 'cl100k_base',
+                    'min_tokens' => 500,
+                    'target_tokens' => 650,
+                    'max_tokens' => 800,
+                    'overlap_tokens' => 80,
+                    'chunk_count' => 1,
+                    'checksum' => str_repeat('c', 64),
+                    'chunks' => [[
+                        'ordinal' => 0,
+                        'checksum' => str_repeat('d', 64),
+                        'text' => 'Refund policy.',
+                        'token_count' => 3,
+                        'character_count' => 14,
+                        'page_start' => 1,
+                        'page_end' => 1,
+                        'source_text_start' => 0,
+                        'source_text_end' => 14,
+                        'source_spans' => [],
+                    ]],
+                ],
             ], 202),
         ]);
 
@@ -73,7 +95,9 @@ class PublicDocumentIngestionTest extends TestCase
             ->assertJsonPath('data.document_version_id', $version->id)
             ->assertJsonPath('data.file.checksum_matches', true)
             ->assertJsonPath('data.parser.page_count', 1)
-            ->assertJsonPath('data.parser.normalized_text', 'Refund policy.');
+            ->assertJsonPath('data.parser.normalized_text', 'Refund policy.')
+            ->assertJsonPath('data.chunking.chunk_count', 1)
+            ->assertJsonPath('data.chunking.chunks.0.text', 'Refund policy.');
 
         Http::assertSent(function (Request $request) use ($checksum, $version): bool {
             $parts = collect($request->data())->keyBy('name');

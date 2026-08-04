@@ -52,6 +52,34 @@ export type IngestionReceipt = {
       }>
     }>
   }
+  chunking: {
+    chunker_version: string
+    tokenizer: string
+    min_tokens: number
+    target_tokens: number
+    max_tokens: number
+    overlap_tokens: number
+    chunk_count: number
+    checksum: string
+    chunks: Array<{
+      ordinal: number
+      checksum: string
+      text: string
+      token_count: number
+      character_count: number
+      page_start: number
+      page_end: number
+      source_text_start: number
+      source_text_end: number
+      source_spans: Array<{
+        page_number: number
+        line_start: number
+        line_end: number
+        text_start: number
+        text_end: number
+      }>
+    }>
+  }
 }
 
 type ErrorEnvelope = {

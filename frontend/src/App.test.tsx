@@ -160,17 +160,42 @@ describe('App', () => {
               'Refund policy\nCustomers may request a refund within 30 days.',
             pages: [],
           },
+          chunking: {
+            chunker_version: 'line-token-v1',
+            tokenizer: 'cl100k_base',
+            min_tokens: 500,
+            target_tokens: 650,
+            max_tokens: 800,
+            overlap_tokens: 80,
+            chunk_count: 1,
+            checksum: 'chunking-checksum',
+            chunks: [
+              {
+                ordinal: 0,
+                checksum: 'chunk-checksum',
+                text: 'Refund policy\nCustomers may request a refund within 30 days.',
+                token_count: 11,
+                character_count: 58,
+                page_start: 1,
+                page_end: 1,
+                source_text_start: 0,
+                source_text_end: 58,
+                source_spans: [],
+              },
+            ],
+          },
         },
       })) as Response,
     )
 
     expect(
-      await screen.findByText('PDF parsed by the AI service'),
+      await screen.findByText('PDF parsed and chunked by the AI service'),
     ).toBeInTheDocument()
     expect(screen.getByText('Match')).toBeInTheDocument()
     expect(screen.getByText('%PDF-')).toBeInTheDocument()
-    expect(screen.getAllByText('Parsed')).toHaveLength(2)
-    expect(screen.getByText('Normalized text preview')).toBeInTheDocument()
+    expect(screen.getAllByText('Chunked')).toHaveLength(2)
+    expect(screen.getByText('First chunk preview')).toBeInTheDocument()
+    expect(screen.getByText('cl100k_base')).toBeInTheDocument()
     expect(
       screen.getByText(
         'Refund policy Customers may request a refund within 30 days.',
