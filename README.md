@@ -33,8 +33,9 @@ application records. A private FastAPI service owns document processing and
 the AI workflow. PostgreSQL stores application data and vector embeddings,
 while Redis supports queues and short-lived state.
 
-See [Architecture and Request Flow](ARCHITECTURE.md) for the repository map,
-implemented API, current visitor journey, and planned ingestion/RAG sequence.
+See [Architecture](ARCHITECTURE.md) for the component and request-flow diagrams,
+and [API Reference](API.md) for concrete implemented endpoints such as PDF
+upload, preview, and deletion.
 
 ## Technology baseline
 
