@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from support_copilot_ai.config import get_settings
 from support_copilot_ai.document_chunker import ChunkedDocument, DocumentChunker
 from support_copilot_ai.document_embedder import (
+    ChunkEmbedding,
     DocumentEmbedder,
     DocumentEmbeddingError,
     EmbeddingSummary,
@@ -39,6 +40,7 @@ class IngestionReceipt(BaseModel):
     parser: ParsedDocument
     chunking: ChunkedDocument
     embedding: EmbeddingSummary
+    embedding_records: list[ChunkEmbedding]
 
 
 settings = get_settings()
@@ -68,6 +70,7 @@ def get_document_embedder() -> DocumentEmbedder | None:
             max_retries=2,
         ),
         model=settings.openai_embedding_model,
+        dimensions=settings.openai_embedding_dimensions,
         batch_size=settings.embedding_batch_size,
     )
 
@@ -179,6 +182,12 @@ async def receive_ingestion(
         parsed_document,
     )
 
+    if not chunked_document.chunks:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The PDF does not contain extractable text.",
+        )
+
     # Step 5 (implemented): create one embedding per chunk in bounded batches.
     # The full vectors remain in memory for the future persistence step; this
     # development receipt only exposes counts and dimensions to keep it compact.
@@ -232,4 +241,5 @@ async def receive_ingestion(
         parser=parsed_document,
         chunking=chunked_document,
         embedding=EmbeddingSummary.from_document(embedded_document),
+        embedding_records=embedded_document.embeddings,
     )

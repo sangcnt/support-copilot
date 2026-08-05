@@ -92,6 +92,13 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
         "dimensions": 3,
         "input_tokens": payload["chunking"]["chunks"][0]["token_count"],
     }
+    assert payload["embedding_records"] == [
+        {
+            "chunk_ordinal": 0,
+            "chunk_checksum": payload["chunking"]["chunks"][0]["checksum"],
+            "vector": [0.1, 0.2, 0.3],
+        }
+    ]
 
 
 def test_ingestion_rejects_non_pdf_content() -> None:
@@ -136,6 +143,27 @@ def test_ingestion_rejects_a_malformed_pdf_after_signature_validation() -> None:
 
     assert response.status_code == 422
     assert response.json() == {"detail": "The PDF could not be parsed."}
+
+
+def test_ingestion_rejects_a_pdf_without_extractable_text() -> None:
+    pdf = build_text_pdf([])
+
+    async def send_blank_pdf():
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            return await client.post(
+                "/internal/ingestions",
+                data={"document_version_id": "01K1EXAMPLEVERSION"},
+                files={"file": ("blank.pdf", pdf, "application/pdf")},
+            )
+
+    response = asyncio.run(send_blank_pdf())
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "The PDF does not contain extractable text."}
 
 
 def test_swagger_is_available_for_manual_testing() -> None:

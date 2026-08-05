@@ -193,9 +193,13 @@ function SourcePanel({
           <span className="waiting-badge">
             {ingesting
               ? 'Ingesting'
-              : sourceChunked
-                ? 'Chunked'
-                : 'Awaiting ingestion'}
+              : document.status === 'ready'
+                ? 'Ready'
+                : document.status === 'failed'
+                  ? 'Failed'
+                  : sourceChunked
+                    ? 'Chunked'
+                    : 'Awaiting ingestion'}
           </span>
         </div>
 
@@ -317,9 +321,10 @@ function ChatPanel({
   }
 
   if (document.status !== 'ready') {
+    const failureMessage = ingestionError ?? document.failure_reason
     const state = ingesting
       ? 'ingesting'
-      : ingestionError
+      : failureMessage
         ? 'error'
         : ingestionReceipt
           ? 'received'
@@ -361,7 +366,7 @@ function ChatPanel({
           {state === 'error' && (
             <>
               <strong>AI service did not receive the PDF</strong>
-              <p>{ingestionError}</p>
+              <p>{failureMessage}</p>
               <button
                 type="button"
                 className="ingestion-action"
@@ -530,6 +535,17 @@ function ChatPanel({
           </div>
         </article>
 
+        {ingestionReceipt && (
+          <p className="ingestion-ready-summary">
+            {ingestionReceipt.embedding.embedding_count}{' '}
+            {ingestionReceipt.embedding.embedding_count === 1
+              ? 'chunk'
+              : 'chunks'}{' '}
+            embedded with {ingestionReceipt.embedding.model} at{' '}
+            {ingestionReceipt.embedding.dimensions} dimensions.
+          </p>
+        )}
+
         {submittedQuestion && (
           <>
             <article className="message message--user">
@@ -540,8 +556,8 @@ function ChatPanel({
             <div className="chat-error" role="alert">
               <span aria-hidden="true">!</span>
               <div>
-                <strong>Upload a PDF first</strong>
-                <p>A document is required before Support Copilot can answer.</p>
+                <strong>Chat is not connected yet</strong>
+                <p>Retrieval and grounded answers are implemented next.</p>
               </div>
             </div>
           </>
@@ -659,6 +675,7 @@ function PublicDemo() {
     try {
       const receipt = await startDocumentIngestion(target.id)
       setIngestionReceipt(receipt)
+      setDocument(receipt.document)
     } catch (error) {
       setIngestionError(
         error instanceof Error

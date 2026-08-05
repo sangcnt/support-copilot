@@ -78,6 +78,7 @@ def test_embedder_batches_chunks_and_preserves_chunk_identity() -> None:
     embedder = DocumentEmbedder(
         client=client,
         model="text-embedding-3-small",
+        dimensions=3,
         batch_size=2,
     )
 
@@ -88,6 +89,7 @@ def test_embedder_batches_chunks_and_preserves_chunk_identity() -> None:
         call["model"] == "text-embedding-3-small" for call in client.embeddings.calls
     )
     assert all(call["encoding_format"] == "float" for call in client.embeddings.calls)
+    assert all(call["dimensions"] == 3 for call in client.embeddings.calls)
     assert result.batch_count == 3
     assert result.embedding_count == 5
     assert result.dimensions == 3
@@ -102,6 +104,7 @@ def test_embedder_rejects_an_incomplete_provider_batch() -> None:
     embedder = DocumentEmbedder(
         client=FakeOpenAIClient(incomplete=True),
         model="text-embedding-3-small",
+        dimensions=3,
         batch_size=2,
     )
 
@@ -117,6 +120,7 @@ def test_embedder_skips_provider_for_an_empty_document() -> None:
     embedder = DocumentEmbedder(
         client=client,
         model="text-embedding-3-small",
+        dimensions=3,
         batch_size=2,
     )
 

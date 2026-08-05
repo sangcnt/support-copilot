@@ -51,6 +51,7 @@ class DocumentEmbedder:
         self,
         client: AsyncOpenAI | Any,
         model: str,
+        dimensions: int,
         batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
     ) -> None:
         if not model.strip():
@@ -59,8 +60,12 @@ class DocumentEmbedder:
         if batch_size < 1:
             raise ValueError("Embedding batch size must be at least one.")
 
+        if dimensions < 1:
+            raise ValueError("Embedding dimensions must be at least one.")
+
         self._client = client
         self._model = model
+        self._dimensions = dimensions
         self._batch_size = batch_size
 
     async def embed(self, document: ChunkedDocument) -> EmbeddedDocument:
@@ -87,6 +92,7 @@ class DocumentEmbedder:
                     model=self._model,
                     input=[chunk.text for chunk in batch],
                     encoding_format="float",
+                    dimensions=self._dimensions,
                 )
             except Exception as exception:
                 raise DocumentEmbeddingError(
@@ -109,6 +115,11 @@ class DocumentEmbedder:
                 if current_dimensions == 0:
                     raise DocumentEmbeddingError(
                         "The embedding provider returned an empty vector."
+                    )
+
+                if current_dimensions != self._dimensions:
+                    raise DocumentEmbeddingError(
+                        "The embedding provider returned unexpected dimensions."
                     )
 
                 if dimensions is None:

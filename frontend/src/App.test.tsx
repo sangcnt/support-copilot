@@ -68,6 +68,7 @@ describe('App', () => {
       display_name: 'policy.pdf',
       source_type: 'upload',
       status: 'pending_ingestion',
+      failure_reason: null,
       is_sample: false,
       expires_at: '2026-08-07T00:00:00Z',
       latest_version: {
@@ -193,24 +194,27 @@ describe('App', () => {
             dimensions: 1536,
             input_tokens: 11,
           },
+          document: {
+            ...uploadedDocument,
+            status: 'ready',
+            latest_version: {
+              ...uploadedDocument.latest_version,
+              ingestion_status: 'ready',
+            },
+          },
         },
       })) as Response,
     )
 
-    expect(
-      await screen.findByText('PDF parsed, chunked, and embedded'),
-    ).toBeInTheDocument()
-    expect(screen.getByText('Match')).toBeInTheDocument()
-    expect(screen.getByText('%PDF-')).toBeInTheDocument()
-    expect(screen.getAllByText('Chunked')).toHaveLength(2)
-    expect(screen.getByText('First chunk preview')).toBeInTheDocument()
-    expect(screen.getByText('cl100k_base')).toBeInTheDocument()
-    expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument()
-    expect(screen.getByText('1536')).toBeInTheDocument()
+    expect(await screen.findByText('Document ready')).toBeInTheDocument()
+    expect(screen.getByText('Ready')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Refund policy Customers may request a refund within 30 days.',
+        '1 chunk embedded with text-embedding-3-small at 1536 dimensions.',
       ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Ask about this document' }),
     ).toBeInTheDocument()
 
     await waitFor(() => {

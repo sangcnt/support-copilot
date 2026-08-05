@@ -3,6 +3,7 @@ export type DocumentRecord = {
   display_name: string
   source_type: string
   status: string
+  failure_reason: string | null
   is_sample: boolean
   expires_at: string | null
   latest_version: {
@@ -89,6 +90,7 @@ export type IngestionReceipt = {
     dimensions: number
     input_tokens: number
   }
+  document: DocumentRecord
 }
 
 type ErrorEnvelope = {

@@ -14,6 +14,7 @@ class DocumentResource extends JsonResource
             'display_name' => $this->display_name,
             'source_type' => $this->source_type,
             'status' => $this->status,
+            'failure_reason' => $this->failure_reason,
             'is_sample' => $this->is_sample,
             'expires_at' => $this->expires_at?->toIso8601String(),
             'versions_count' => $this->whenCounted('versions'),

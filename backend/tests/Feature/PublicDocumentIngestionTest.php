@@ -91,9 +91,14 @@ class PublicDocumentIngestionTest extends TestCase
                     'batch_size' => 32,
                     'batch_count' => 1,
                     'embedding_count' => 1,
-                    'dimensions' => 1536,
+                    'dimensions' => 3,
                     'input_tokens' => 3,
                 ],
+                'embedding_records' => [[
+                    'chunk_ordinal' => 0,
+                    'chunk_checksum' => str_repeat('d', 64),
+                    'vector' => [0.1, 0.2, 0.3],
+                ]],
             ], 202),
         ]);
 
@@ -109,7 +114,15 @@ class PublicDocumentIngestionTest extends TestCase
             ->assertJsonPath('data.chunking.chunks.0.text', 'Refund policy.')
             ->assertJsonPath('data.embedding.model', 'text-embedding-3-small')
             ->assertJsonPath('data.embedding.embedding_count', 1)
-            ->assertJsonPath('data.embedding.dimensions', 1536);
+            ->assertJsonPath('data.embedding.dimensions', 3)
+            ->assertJsonPath('data.document.status', 'ready')
+            ->assertJsonPath('data.document.latest_version.ingestion_status', 'ready')
+            ->assertJsonMissingPath('data.embedding_records');
+
+        $this->ownedRequest($token)
+            ->postJson("/api/public/documents/{$document->id}/ingestions")
+            ->assertStatus(202)
+            ->assertJsonPath('data.document.status', 'ready');
 
         Http::assertSent(function (Request $request) use ($checksum, $version): bool {
             $parts = collect($request->data())->keyBy('name');
@@ -123,11 +136,35 @@ class PublicDocumentIngestionTest extends TestCase
 
         $this->assertDatabaseHas('documents', [
             'id' => $document->id,
-            'status' => 'pending_ingestion',
+            'status' => 'ready',
+            'failure_reason' => null,
         ]);
         $this->assertDatabaseHas('document_versions', [
             'id' => $version->id,
-            'ingestion_status' => 'pending',
+            'ingestion_status' => 'ready',
+            'parser_version' => 'pdfplumber-0.11.10:v1',
+            'chunking_version' => 'line-token-v1',
+            'embedding_model' => 'text-embedding-3-small',
+            'embedding_dimensions' => 3,
+            'embedding_input_tokens' => 3,
+        ]);
+        $this->assertDatabaseCount('chunks', 1);
+        $this->assertDatabaseHas('chunks', [
+            'document_version_id' => $version->id,
+            'ordinal' => 0,
+            'page_number' => 1,
+            'page_end' => 1,
+            'normalized_text' => 'Refund policy.',
+            'content_checksum' => str_repeat('d', 64),
+            'embedding_model' => 'text-embedding-3-small',
+        ]);
+        $this->assertDatabaseCount('usage_events', 2);
+        $this->assertDatabaseHas('usage_events', [
+            'document_id' => $document->id,
+            'event_type' => 'document_embedding',
+            'provider' => 'openai',
+            'model' => 'text-embedding-3-small',
+            'input_tokens' => 3,
         ]);
     }
 
@@ -164,10 +201,38 @@ class PublicDocumentIngestionTest extends TestCase
             ->assertStatus(502)
             ->assertExactJson([
                 'error' => [
-                    'code' => 'ai_service_unavailable',
-                    'message' => 'The AI service could not receive this PDF. Please try again.',
+                    'code' => 'document_processing_unavailable',
+                    'message' => 'Document processing is temporarily unavailable. Please try again.',
                 ],
             ]);
+
+        $this->assertDatabaseHas('documents', [
+            'id' => $document->id,
+            'status' => 'failed',
+            'failure_reason' => 'Document processing is temporarily unavailable. Please try again.',
+        ]);
+        $this->assertDatabaseHas('document_versions', [
+            'id' => $version->id,
+            'ingestion_status' => 'failed',
+            'failure_code' => 'document_processing_unavailable',
+        ]);
+        $this->assertDatabaseMissing('document_versions', [
+            'id' => $version->id,
+            'failure_diagnostic' => null,
+        ]);
+        $this->assertStringContainsString(
+            'Internal diagnostic that must not reach the browser.',
+            $version->fresh()->failure_diagnostic,
+        );
+
+        $this->ownedRequest($token)
+            ->getJson("/api/public/documents/{$document->id}")
+            ->assertOk()
+            ->assertJsonPath(
+                'data.failure_reason',
+                'Document processing is temporarily unavailable. Please try again.',
+            )
+            ->assertJsonMissingPath('data.latest_version.failure_diagnostic');
     }
 
     /**

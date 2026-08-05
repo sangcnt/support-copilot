@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Document;
+use App\Models\DocumentVersion;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -27,12 +28,12 @@ class AiIngestionClient
      *     },
      *     parser: array<string, mixed>,
      *     chunking: array<string, mixed>,
-     *     embedding: array<string, mixed>
+     *     embedding: array<string, mixed>,
+     *     embedding_records: list<array<string, mixed>>
      * }
      */
-    public function receive(Document $document): array
+    public function receive(Document $document, DocumentVersion $version): array
     {
-        $version = $document->latestVersion()->firstOrFail();
         $storageKey = $version->storage_key;
 
         if ($storageKey === null || ! $this->storage->disk()->exists($storageKey)) {
@@ -74,6 +75,7 @@ class AiIngestionClient
             || ! is_array($receipt['parser'] ?? null)
             || ! is_array($receipt['chunking'] ?? null)
             || ! is_array($receipt['embedding'] ?? null)
+            || ! is_array($receipt['embedding_records'] ?? null)
         ) {
             throw new RuntimeException('The AI service returned an invalid ingestion receipt.');
         }

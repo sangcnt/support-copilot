@@ -16,11 +16,16 @@ class Chunk extends Model
         'ordinal',
         'heading',
         'page_number',
+        'page_end',
         'normalized_text',
         'token_count',
         'content_checksum',
         'embedding_model',
         'chunking_version',
+        'source_text_start',
+        'source_text_end',
+        'source_spans',
+        'embedding',
     ];
 
     protected function casts(): array
@@ -28,7 +33,11 @@ class Chunk extends Model
         return [
             'ordinal' => 'integer',
             'page_number' => 'integer',
+            'page_end' => 'integer',
             'token_count' => 'integer',
+            'source_text_start' => 'integer',
+            'source_text_end' => 'integer',
+            'source_spans' => 'array',
         ];
     }
 

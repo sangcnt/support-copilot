@@ -22,7 +22,19 @@ class DocumentVersion extends Model
         'byte_size',
         'content_checksum',
         'parser_version',
+        'parser_metadata',
+        'chunking_version',
+        'chunking_checksum',
+        'embedding_provider',
+        'embedding_model',
+        'embedding_dimensions',
+        'embedding_input_tokens',
         'ingestion_status',
+        'failure_code',
+        'failure_diagnostic',
+        'ingestion_started_at',
+        'ingestion_completed_at',
+        'ingestion_failed_at',
     ];
 
     protected function casts(): array
@@ -30,6 +42,12 @@ class DocumentVersion extends Model
         return [
             'version' => 'integer',
             'byte_size' => 'integer',
+            'parser_metadata' => 'array',
+            'embedding_dimensions' => 'integer',
+            'embedding_input_tokens' => 'integer',
+            'ingestion_started_at' => 'datetime',
+            'ingestion_completed_at' => 'datetime',
+            'ingestion_failed_at' => 'datetime',
         ];
     }
 
