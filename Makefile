@@ -2,6 +2,14 @@
 
 COMPOSE := docker compose
 
+# Docker Compose injects real local-environment values (Postgres, APP_ENV=local)
+# into every service, including the ad-hoc `run` used for tests. phpunit.xml's
+# <env> values cannot reliably override those already-set container variables,
+# so force the isolated testing environment explicitly here instead. Without
+# this, `composer test` runs RefreshDatabase against the real dev Postgres
+# database and drops its tables via migrate:fresh.
+BACKEND_TEST_ENV := -e APP_ENV=testing -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: -e SESSION_DRIVER=array -e CACHE_STORE=array -e QUEUE_CONNECTION=sync
+
 .PHONY: help setup env build dev up down logs migrate test lint format health config
 
 help: ## Show available commands
@@ -34,7 +42,7 @@ migrate: ## Run Laravel database migrations
 
 test: build ## Run all automated tests
 	$(COMPOSE) --profile tools run --rm frontend sh -c "npm ci --no-audit --no-fund && npm test"
-	$(COMPOSE) run --rm --no-deps backend composer test
+	$(COMPOSE) run --rm --no-deps $(BACKEND_TEST_ENV) backend composer test
 	$(COMPOSE) run --rm --no-deps ai-service python -m pytest
 
 lint: build ## Run all static and formatting checks
