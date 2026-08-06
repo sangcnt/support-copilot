@@ -130,11 +130,12 @@ authentication and administrator authorization.
 | GET | `/health` | Internal health check |
 | POST | `/internal/ingestions` | Parse, chunk, and embed a PDF; return a full receipt (incl. vectors) for Laravel to persist |
 | POST | `/internal/retrieval` | Embed a query and return the top-k chunks of one `document_version_id` above a relevance threshold (exact cosine search, pgvector) |
+| POST | `/internal/answers` | Run retrieval, then ask the answer model for a grounded, cited response — or a safe fallback when evidence is insufficient |
 
 Not exposed publicly; Swagger UI is available on a dev-only loopback listener
 at `/docs`. The caller must resolve `document_version_id` to the document's
 active, `ready` version — this service only ever searches within the exact ID
-it's given. Generation routes do not exist yet.
+it's given. No public chat endpoint calls these yet (see section 6).
 
 ## 5. Current guest flow
 
@@ -188,45 +189,44 @@ Response → React (latest document + ingestion receipt)
 
 The chat composer unlocks once the document is `ready`, but there is no chat
 backend yet — submitting a question just shows a static "not connected"
-message until a public chat endpoint and grounded generation (section 6) are
-built. Retrieval itself already works internally.
+message. Retrieval and grounded generation already work internally (below);
+only the public chat endpoint that would call them is still planned.
 
-## 6. Retrieval and planned grounded-answer flow
+## 6. Grounded-answer generation
 
-Ingestion (section 5) and retrieval are implemented. Turning a retrieved
-chunk set into a grounded, cited answer is still planned:
+`POST /internal/answers` is implemented (dev/Swagger only for now — no public
+route calls it yet):
 
 ```text
-POST /internal/retrieval   (implemented, internal — dev/Swagger only for now)
+POST /internal/answers
    │  {document_version_id, query, top_k?, min_score?}
    ▼
 FastAPI (ai-service)
-   ├─ normalize_query() → embed via OpenAI (same model as ingestion)
-   ├─ AsyncpgChunkRepository.search()
-   │     → cosine search on chunks.embedding (pgvector), scoped to
-   │       exactly the given document_version_id
-   │     → top-k, ordered by similarity
-   └─ keep only chunks scoring ≥ min_score → evidence_sufficient
+   ├─ retrieve_chunks()  (embed query → cosine search on pgvector, scoped
+   │                      to exactly document_version_id — same logic as
+   │                      /internal/retrieval, section 4.3)
+   │
+   ├─ (no evidence)  return a fixed fallback, skip the model call entirely
+   │
+   └─ (evidence found)
+         ├─ build an evidence block: each chunk wrapped in
+         │    <evidence id="chunk_id">...</evidence>, marked as untrusted
+         │    data in the system instruction — never as instructions
+         ├─ client.responses.parse() → structured output:
+         │    {sufficient_evidence, answer, citation_chunk_ids}
+         ├─ drop any citation_chunk_ids not in the retrieved set
+         └─ (model abstained, or zero valid citations remain) → fallback
    ▼
-RetrievalResult {chunks: [{chunk_id, page_start, page_end, text, score}, ...]}
-
-──────────────────────────────────────────────────────────────
-
-Browser (React)
-   │  POST <public chat endpoint — route not yet defined>          (planned)
-   ▼
-Laravel API → validate session/document/quota → forward to FastAPI
-   ▼
-FastAPI: run retrieval above, then
-   ├─ (evidence found)  build prompt from retrieved chunks → call answer model
-   │        → structured output: answer + citation chunk_id(s)
-   └─ (no evidence)     return an insufficient-evidence fallback, skip the model call
-   ▼
-Laravel: validate citations resolve to retrieved chunks → persist message,
-citations, usage_events
-   ▼
-Response (streamed) → React renders the answer with clickable citations
+GeneratedAnswer
+   { answer, fallback, fallback_reason, model,
+     input_tokens, output_tokens, latency_ms,
+     citations: [{chunk_id, page_start, page_end, excerpt}, ...] }
+                                             ↑ excerpt is always read back
+                                               from stored chunk text
 ```
 
-No public chat route name is defined yet, to avoid publishing an untested
-contract.
+The model only ever names a `chunk_id`; it cannot supply its own citation
+text, excerpt, or source label — the application resolves those from the
+chunk actually retrieved. Wiring this up to a public, streaming chat endpoint
+with session/document/quota validation and persisted messages is still
+planned (see the project's implementation plan for that stage).

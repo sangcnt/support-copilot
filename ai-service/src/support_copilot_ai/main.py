@@ -10,6 +10,11 @@ from fastapi.concurrency import run_in_threadpool
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from support_copilot_ai.answer_generator import (
+    GeneratedAnswer,
+    GenerationError,
+    generate_answer,
+)
 from support_copilot_ai.chunk_retriever import (
     AsyncpgChunkRepository,
     ChunkRepository,
@@ -138,14 +143,38 @@ class RetrievalRequest(BaseModel):
     min_score: float | None = None
 
 
+class AnswerRequest(BaseModel):
+    document_version_id: str
+    query: str
+    top_k: int | None = None
+    min_score: float | None = None
+
+
+@lru_cache
+def get_answer_model_client() -> AsyncOpenAI | None:
+    api_key = settings.openai_api_key
+
+    if settings.provider.lower() != "openai" or api_key is None:
+        return None
+
+    revealed_key = api_key.get_secret_value().strip()
+
+    if not revealed_key or not settings.openai_chat_model.strip():
+        return None
+
+    return AsyncOpenAI(api_key=revealed_key, timeout=60.0, max_retries=2)
+
+
 app = FastAPI(
     title="Support Copilot AI Service",
     description=(
         "Internal AI workflow API. The ingestion endpoint parses a PDF, "
         "chunks it, and embeds each chunk for Laravel to persist. The "
         "retrieval endpoint embeds a query and returns the most relevant "
-        "chunks of one document version by cosine similarity. Grounded "
-        "generation is not implemented yet."
+        "chunks of one document version by cosine similarity. The answers "
+        "endpoint retrieves evidence and asks the answer model for a "
+        "grounded, cited response, or a safe fallback when evidence is "
+        "insufficient."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -303,6 +332,47 @@ async def receive_ingestion(
     )
 
 
+def _require_document_version_id_and_query(
+    document_version_id: str,
+    query: str,
+) -> None:
+    if not document_version_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="document_version_id is required.",
+        )
+
+    if not query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="query is required.",
+        )
+
+
+def _resolve_retrieval_params(
+    top_k: int | None,
+    min_score: float | None,
+) -> tuple[int, float]:
+    resolved_top_k = top_k if top_k is not None else settings.retrieval_top_k
+    resolved_min_score = (
+        min_score if min_score is not None else settings.retrieval_min_score
+    )
+
+    if not 1 <= resolved_top_k <= 20:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="top_k must be between 1 and 20.",
+        )
+
+    if not 0.0 <= resolved_min_score <= 1.0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="min_score must be between 0 and 1.",
+        )
+
+    return resolved_top_k, resolved_min_score
+
+
 @app.post(
     "/internal/retrieval",
     response_model=RetrievalResult,
@@ -322,17 +392,7 @@ async def retrieve(
     across documents or versions on its own.
     """
 
-    if not request.document_version_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="document_version_id is required.",
-        )
-
-    if not request.query.strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="query is required.",
-        )
+    _require_document_version_id_and_query(request.document_version_id, request.query)
 
     if embedder is None:
         raise HTTPException(
@@ -340,24 +400,7 @@ async def retrieve(
             detail="The embedding provider is not configured.",
         )
 
-    top_k = request.top_k if request.top_k is not None else settings.retrieval_top_k
-    min_score = (
-        request.min_score
-        if request.min_score is not None
-        else settings.retrieval_min_score
-    )
-
-    if not 1 <= top_k <= 20:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="top_k must be between 1 and 20.",
-        )
-
-    if not 0.0 <= min_score <= 1.0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="min_score must be between 0 and 1.",
-        )
+    top_k, min_score = _resolve_retrieval_params(request.top_k, request.min_score)
 
     try:
         return await retrieve_chunks(
@@ -385,4 +428,80 @@ async def retrieve(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The retrieval store could not be queried.",
+        ) from exception
+
+
+@app.post(
+    "/internal/answers",
+    response_model=GeneratedAnswer,
+    tags=["generation"],
+    summary="Answer a question grounded in one document version's retrieved chunks",
+)
+async def answer(
+    request: AnswerRequest,
+    embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
+    repository: Annotated[ChunkRepository, Depends(get_chunk_repository)] = None,  # type: ignore[assignment]
+    client: Annotated[AsyncOpenAI | None, Depends(get_answer_model_client)] = None,
+) -> GeneratedAnswer:
+    """Development-facing grounded-answer endpoint.
+
+    Retrieves evidence scoped to exactly `document_version_id` (see
+    `/internal/retrieval`), then asks the answer model to respond using only
+    that evidence. Citations are validated against the retrieved chunk set
+    server-side; the model can never supply its own excerpt or source label.
+    """
+
+    _require_document_version_id_and_query(request.document_version_id, request.query)
+
+    if embedder is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The embedding provider is not configured.",
+        )
+
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The answer model is not configured.",
+        )
+
+    top_k, min_score = _resolve_retrieval_params(request.top_k, request.min_score)
+
+    try:
+        return await generate_answer(
+            client=client,
+            chat_model=settings.openai_chat_model,
+            embedder=embedder,
+            repository=repository,
+            document_version_id=request.document_version_id,
+            query=request.query,
+            top_k=top_k,
+            min_score=min_score,
+        )
+    except DocumentEmbeddingError as exception:
+        logger.exception(
+            "Unable to embed answer query document_version_id=%s",
+            request.document_version_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The query could not be embedded.",
+        ) from exception
+    except RetrievalError as exception:
+        logger.exception(
+            "Unable to query the retrieval store document_version_id=%s",
+            request.document_version_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The retrieval store could not be queried.",
+        ) from exception
+    except GenerationError as exception:
+        logger.exception(
+            "Unable to generate an answer document_version_id=%s",
+            request.document_version_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The answer model could not be called.",
         ) from exception
