@@ -2,8 +2,9 @@
 
 This document describes the current Support Copilot service boundaries, startup
 commands, implemented endpoints, and the request flow from an anonymous visit
-through PDF upload and preview. Future endpoints are explicitly marked as not
-implemented and should not be treated as established API contracts.
+through PDF upload, preview, and ingestion. Future endpoints are explicitly
+marked as not implemented and should not be treated as established API
+contracts.
 
 ## 1. Runtime boundary
 
@@ -36,7 +37,7 @@ private application network.
 | React SPA | `frontend/` | Public upload workspace, PDF preview, and static admin preview |
 | Laravel API | `backend/` | Anonymous sessions, authorization, PDF lifecycle, admin API, and application records |
 | Laravel queue worker | Shared code in `backend/` | Runs the Redis worker; no ingestion job exists yet |
-| FastAPI AI service | `ai-service/` | Validates PDFs, extracts normalized text and page/line coordinates, creates deterministic token-aware chunks, and generates bounded batches of chunk embeddings; persistence, retrieval, and LLM answers are not implemented |
+| FastAPI AI service | `ai-service/` | Validates PDFs, extracts normalized text and page/line coordinates, creates deterministic token-aware chunks, and generates bounded batches of chunk embeddings; stateless, holds no database connection, and returns everything as a receipt for Laravel to persist. Retrieval and LLM answers are not implemented |
 | Nginx | `infrastructure/nginx/` | Builds and serves the React bundle and forwards `/api/*` and `/sanctum/*` to PHP-FPM |
 | PHP-FPM image | `infrastructure/php/` | Laravel runtime and file-upload limits |
 | PostgreSQL initialization | `infrastructure/postgres/` | Enables pgvector; Laravel migrations manage application tables |
@@ -192,9 +193,13 @@ document_version_id=<document_versions.id>
 checksum=<document_versions.content_checksum>
 ```
 
-The current response is a development receipt containing filename, byte size,
-PDF signature, calculated SHA-256, checksum match, normalized text, document
-metadata, and page/line coordinates.
+Laravel persists the receipt: each chunk and its embedding vector is inserted
+into `chunks` (pgvector) in one transaction, and the document/version status
+moves to `ready`. On failure, status moves to `failed` with a safe
+`failure_reason` for the client; the raw exception is kept server-side only as
+`failure_diagnostic`. The response returns the updated document plus the
+ingestion receipt (parser, chunking, and embedding summary; full vectors are
+not re-serialized back to the browser).
 
 ### 5.2 Administrator API
 
@@ -221,54 +226,60 @@ Sanctum authentication and administrator authorization.
 | Method | Internal path | Status |
 |---|---|---|
 | `GET` | `/health` | Implemented for internal health checks |
-| `POST` | `/internal/ingestions` | Receives multipart PDF data and returns checksum plus parser output; no persistence yet |
+| `POST` | `/internal/ingestions` | Receives multipart PDF data; parses, chunks, and embeds it; returns a full receipt (including chunk vectors) for Laravel to persist. FastAPI itself does not write to any database |
 
 FastAPI is not exposed through the public application. Its Swagger UI is
-available on a development-only loopback listener at `/docs`. Chunking,
-retrieval, and generation routes have not been implemented or named.
+available on a development-only loopback listener at `/docs`. Retrieval and
+generation routes have not been implemented or named.
 
 ## 6. Current guest flow
 
-```mermaid
-sequenceDiagram
-    actor User as Anonymous visitor
-    participant UI as React SPA
-    participant Nginx
-    participant API as Laravel API
-    participant DB as PostgreSQL
-    participant Files as Private PDF storage
-    participant AI as FastAPI
-
-    User->>Nginx: GET /demo/support-copilot/
-    Nginx-->>User: React production bundle
-    UI->>API: GET /api/public/session
-    API->>DB: Resolve or create anonymous session
-    API-->>UI: Session metadata and HttpOnly cookie
-    UI->>API: GET /api/public/documents
-    API->>DB: Read owned documents and shared sample
-    API-->>UI: Document collection
-    User->>UI: Select a PDF
-    UI->>API: GET /sanctum/csrf-cookie
-    API-->>UI: XSRF-TOKEN cookie
-    UI->>API: POST /api/public/documents
-    API->>API: Validate size, MIME, signature, and checksum
-    API->>Files: Store original PDF privately
-    API->>DB: Create document and version records
-    API-->>UI: 201 new document or 200 duplicate
-    UI->>API: GET /api/public/documents/{id}/source
-    API->>DB: Authorize ownership, sample status, and expiry
-    API->>Files: Read original PDF
-    API-->>UI: Inline application/pdf response
-    UI-->>User: Render PDF preview
-    UI->>API: POST /api/public/documents/{id}/ingestions
-    API->>Files: Open the authorized private PDF
-    API->>AI: POST /internal/ingestions (multipart PDF)
-    AI->>AI: Validate, parse, and create deterministic chunks
-    AI->>Provider: Create bounded batches of chunk embeddings
-    Provider-->>AI: Embedding vectors and token usage
-    AI-->>API: 202 parser, chunker, and embedding summary
-    API-->>UI: 202 ingestion development receipt
-    UI-->>User: Keep preview visible and show processing summary
+```text
+Browser (React)
+   │
+   ├─ 1) GET  /api/public/session                  → create/refresh anonymous session (cookie)
+   ├─ 2) GET  /api/public/documents                 → restore owned document or shared sample
+   ├─ 3) GET  /sanctum/csrf-cookie                   → obtain CSRF token before any mutation
+   ├─ 4) POST /api/public/documents                  → upload PDF
+   ├─ 5) GET  /api/public/documents/{id}/source       → inline PDF preview
+   └─ 6) POST /api/public/documents/{id}/ingestions   → start ingestion
+   ▼
+Laravel (Nginx → PHP-FPM)
+   │
+   ├─ Route 4 → PublicDocumentController::store()
+   │     → validate size / MIME / `%PDF-` signature, SHA-256 checksum (reuse if duplicate)
+   │     → store file on private disk
+   │     → create `documents` (status=pending_ingestion) + `document_versions` (v1, pending)
+   │     → 201 new / 200 duplicate — does not call FastAPI yet
+   │
+   └─ Route 6 → PublicDocumentIngestionController::__invoke()
+         │
+         ├─ DocumentIngestionLifecycle::start($document)
+         │     → lock document + version, set status = "processing"
+         │
+         ├─ AiIngestionClient::receive($document, $version)
+         │     → read file from private storage
+         │     → HTTP POST multipart to FastAPI: /internal/ingestions
+         │           │
+         │           ▼
+         │     FastAPI (ai-service) — stateless, no database connection
+         │        ├─ PdfParser.parse()        → text + page/line offsets (pdfplumber)
+         │        ├─ DocumentChunker.chunk()  → ~650-token chunks, checksums (tiktoken)
+         │        ├─ DocumentEmbedder.embed() → batched calls to OpenAI Embeddings API
+         │        └─ returns JSON receipt: {parser, chunking, embedding, embedding_records[vector]}
+         │
+         ├─ (success) DocumentIngestionLifecycle::complete($receipt)
+         │     → transaction: validate ordinal/checksum consistency
+         │     → insert each chunk + vector into `chunks` (pgvector)
+         │     → set document_version.ingestion_status = "ready"
+         │     → set document.status = "ready"
+         │     → record one `usage_events` row (tokens, latency, model)
+         │
+         └─ (failure) DocumentIngestionLifecycle::fail($exception)
+               → set status = "failed" + failure_reason (safe for the client)
+               → store failure_diagnostic separately (internal only)
+   ▼
+Response → React (latest document + ingestion receipt)
 ```
 
 ### 6.1 Opening the demo
@@ -327,15 +338,25 @@ sequenceDiagram
    set also has a reproducible checksum and versioned configuration.
 8. FastAPI sends at most 32 chunk texts per OpenAI Embeddings API request. It
    validates that the provider returns exactly one same-sized vector per chunk
-   while retaining the ordinal and checksum needed by the persistence step.
-9. The `202 Accepted` development receipt includes parser/chunking output plus
-   an embedding summary with model, batch count, vector count, dimensions, and
-   input-token usage. Full vectors remain internal and are not serialized into
-   the receipt.
-10. FastAPI does not persist parser, chunk, or vector output and does not run
-    OCR in this slice.
-11. Laravel does not change `pending_ingestion` or `pending`; the UI shows a
-   parser/chunker summary and first-chunk preview while chat remains locked.
+   and returns each vector alongside its chunk ordinal and checksum in
+   `embedding_records`.
+9. FastAPI does not persist anything itself and does not run OCR in this
+   slice; the full receipt — parser output, chunks, and `embedding_records`
+   with vectors — travels back to Laravel in the response body.
+10. `DocumentIngestionLifecycle::complete()` validates that ordinals and
+    checksums line up between `chunking.chunks` and `embedding_records`, then
+    inserts each chunk row (including its vector) into `chunks` inside one
+    transaction, and moves the document/version to `ready`.
+11. On any failure in the FastAPI call or persistence step,
+    `DocumentIngestionLifecycle::fail()` moves the document/version to
+    `failed`, storing a safe `failure_reason` for the client and the raw
+    exception separately as `failure_diagnostic`.
+12. The response returns the refreshed document (now `ready` or `failed`)
+    together with the receipt. React enables the chat composer once the
+    document is `ready`, but submitting a question still shows a static
+    "Chat is not connected yet" message — there is no chat endpoint until
+    retrieval (stage 6) and generation (stage 7) exist. Chunk `text`/vectors
+    are not re-sent to the browser wholesale.
 
 ### 6.4 Previewing a PDF
 
@@ -359,68 +380,62 @@ sequenceDiagram
 
 ### 6.6 Asking a question today
 
-An uploaded document remains `pending_ingestion`, so the chat composer stays
-locked after displaying the parser and chunker result.
-
-The current application does not yet:
+Once ingestion succeeds, the document reaches `ready` and the chat composer
+unlocks, but submitting a question only renders a static "Chat is not
+connected yet" message. The current application does not yet:
 
 - expose a public chat endpoint;
 - create conversations or messages;
-- persist parser/chunker output or run OCR;
 - create query embeddings;
-- query pgvector;
+- query pgvector for relevant chunks;
 - call an answer model;
 - stream an answer; or
 - create or highlight citations.
 
-## 7. Planned ingestion and grounded-answer flow
+Chunks and their vectors are persisted (see [section 6.3](#63-handing-the-pdf-to-fastapi)),
+but nothing yet reads them back — that is stage 6 (retrieval).
 
-This sequence describes the intended service boundary, not an implemented API
-contract.
+## 7. Planned retrieval and grounded-answer flow
 
-```mermaid
-sequenceDiagram
-    actor User as Anonymous visitor
-    participant UI as React SPA
-    participant API as Laravel API
-    participant Queue as Redis queue and worker
-    participant AI as FastAPI
-    participant DB as PostgreSQL and pgvector
-    participant Provider as Model provider
+Ingestion (parsing, chunking, embedding, and persistence) is already
+implemented — see [section 6](#6-current-guest-flow). What is still planned is
+turning a question into a grounded, cited answer:
 
-    Note over API,Provider: Planned asynchronous ingestion
-    API->>Queue: Dispatch idempotent ingestion operation
-    Queue->>AI: Send authorized document source
-    AI->>AI: Parse PDF and create deterministic chunks
-    AI->>Provider: Create batched chunk embeddings
-    Provider-->>AI: Embedding vectors
-    AI->>DB: Store chunks, metadata, and vectors
-    AI-->>API: Return ingestion result
-    API->>DB: Mark document ready or failed
-
-    Note over User,Provider: Planned grounded chat
-    User->>UI: Submit a question
-    UI->>API: Start public chat request
-    API->>API: Validate session, document, and quota
-    API->>AI: Start grounded-answer workflow
-    AI->>Provider: Embed the user query
-    Provider-->>AI: Query vector
-    AI->>DB: Retrieve document-scoped chunks
-    DB-->>AI: Evidence and page metadata
-    AI->>Provider: Generate from retrieved evidence
-    Provider-->>AI: Answer and citation references
-    AI-->>API: Stream answer events
-    API->>API: Validate citations and usage
-    API->>DB: Persist messages, citations, and usage
-    API-->>UI: Stream the validated answer
-    UI-->>User: Render answer and clickable citations
+```text
+Browser (React)
+   │  POST <public chat endpoint — route not yet defined, see note below>
+   ▼
+Laravel API
+   │  → validate session, document ownership, and quota
+   │  → forward to FastAPI grounded-answer workflow
+   ▼
+FastAPI (ai-service)
+   │
+   ├─ embed the user question (same embedding model as ingestion)
+   │        │
+   │        ▼
+   ├─ query `chunks` in Postgres/pgvector
+   │     → cosine search, filtered by active document_version_id
+   │     → top-k above a minimum relevance threshold
+   │        │
+   │        ▼
+   ├─ (evidence found)  build prompt from retrieved chunks → call answer model
+   │        → structured output: answer + citation chunk_id(s)
+   │
+   └─ (no evidence)     return an insufficient-evidence fallback, skip the model call
+   ▼
+Laravel API
+   │  → validate every citation resolves to a chunk actually retrieved
+   │  → resolve chunk_id → excerpt/page/document name for the client
+   │  → persist message, citations, and usage_events
+   ▼
+Response (streamed) → React renders the answer with clickable citations
 ```
 
 ### Missing endpoints
 
 | Capability | Public or internal endpoint | Status |
 |---|---|---|
-| Persisted parsed block and chunk inspection | — | Parser and chunker output currently exists only in the ingestion receipt |
 | Retrieval inspection | — | Not implemented |
 | Create or continue a public conversation | — | Not implemented |
 | Submit a question and receive a stream | — | API and event contract not defined |
@@ -441,7 +456,7 @@ FastAPI and model providers remain private.
 |---|---|---|
 | Open demo | `anonymous_sessions` | None |
 | Upload PDF | Private PDF, `documents`, and `document_versions` | None |
-| Ingestion handoff | Normalized text and structural metadata, deterministic chunks, and non-persisted chunk embeddings | Persisted `chunks` and vectors |
+| Ingestion | `chunks` with vectors (pgvector), version/parser/chunking metadata on `document_versions`, and one `usage_events` row | None — already implemented |
 | Ask question | Not implemented | `conversations` and user `messages` |
 | Generate answer | Not implemented | Assistant `messages`, `message_citations`, and `usage_events` |
 | Feedback and handoff | Not implemented | Feedback and conversation support state |
@@ -461,18 +476,20 @@ Implemented
   document and version metadata
   authorized list, show, preview, and delete
   separate Laravel-to-FastAPI PDF handoff
-  FastAPI Swagger and ingestion debug receipt
+  FastAPI Swagger and ingestion receipt
   normalized PDF text and page/line structural metadata
   deterministic token-aware chunks with source ranges and checksums
   bounded OpenAI chunk-embedding batches with response validation
+  persisted chunks and vectors (pgvector), transactional and re-run-safe
+  document/version ready and failed transitions with safe/internal error detail
   static administrator preview
   protected administrator Laravel API
 
 Not implemented
   administrator login UI
   asynchronous ingestion queue job
-  parser/chunker-output persistence and OCR
-  persisted embeddings and query embeddings
+  OCR for scanned PDFs
+  query embeddings
   pgvector retrieval
   grounded generation
   streaming chat
