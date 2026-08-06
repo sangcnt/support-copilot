@@ -7,24 +7,83 @@
     BlinkMacSystemFont,
     'Segoe UI',
     sans-serif;
-  color: #eef2f7;
-  background: #090c12;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --surface: #10151e;
-  --surface-strong: #151b26;
-  --border: #293141;
-  --border-soft: rgb(255 255 255 / 8%);
-  --heading: #f7f9fc;
-  --muted: #aab4c3;
-  --accent: #8ba7ff;
-  --success: #2ce7b7;
-  --mint: #4de5bd;
-  --blue: #7d9fff;
+
   --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  color-scheme: dark;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --content-width: 1440px;
+
+  /* Accent: blue, reserved for buttons and other interactive controls -
+     never for large surfaces or decoration. Same in both themes. */
+  --accent: #4d7cff;
+  --accent-strong: #3f6ae6;
+  --accent-ink: #ffffff;
+  --accent-wash: rgb(77 124 255 / 12%);
+  --accent-border: rgb(77 124 255 / 32%);
+
   scroll-behavior: smooth;
+}
+
+/* Dark theme (default) */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  color: #e7eaef;
+  background: #0a0b0f;
+
+  --bg: #0a0b0f;
+  --surface: #111318;
+  --surface-raised: #191c22;
+  --surface-sunken: #0d0e12;
+
+  --border: #20232a;
+  --border-strong: #2d323c;
+
+  --heading: #f5f6f8;
+  --body: #c7cbd3;
+  --muted: #8b8f99;
+  --faint: #5c616b;
+
+  --success: #35d399;
+  --success-wash: rgb(53 211 153 / 12%);
+  --warn: #e0ac52;
+  --warn-wash: rgb(224 172 82 / 12%);
+  --danger: #ea7d86;
+  --danger-wash: rgb(234 125 134 / 12%);
+}
+
+/* Light theme */
+:root[data-theme='light'] {
+  color-scheme: light;
+  color: #1a1d22;
+  background: #f4f5f7;
+
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-raised: #f0f1f4;
+  --surface-sunken: #e9eaee;
+
+  --border: #e2e4e9;
+  --border-strong: #ced1d8;
+
+  --heading: #14161a;
+  --body: #383c43;
+  --muted: #666b74;
+  --faint: #8a8f98;
+
+  --accent-strong: #2f5ee0;
+  --accent-wash: rgb(77 124 255 / 9%);
+
+  --success: #16915f;
+  --success-wash: rgb(22 145 95 / 10%);
+  --warn: #a06a1f;
+  --warn-wash: rgb(160 106 31 / 10%);
+  --danger: #c94654;
+  --danger-wash: rgb(201 70 84 / 8%);
 }
 
 * {
@@ -55,6 +114,6 @@ a {
 }
 
 ::selection {
-  color: #07110f;
-  background: var(--mint);
+  color: var(--accent-ink);
+  background: var(--accent);
 }

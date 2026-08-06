@@ -19,6 +19,14 @@ import './App.css'
 type AppView = 'demo' | 'admin'
 type MobilePanel = 'source' | 'chat'
 type AdminSection = 'documents' | 'conversations' | 'usage'
+type Theme = 'light' | 'dark'
+
+const THEME_STORAGE_KEY = 'support-copilot-theme'
+
+function initialTheme(): Theme {
+  const attribute = document.documentElement.dataset.theme
+  return attribute === 'light' ? 'light' : 'dark'
+}
 
 const sampleQuestions = [
   'Summarize this document',
@@ -40,12 +48,40 @@ function Brand() {
   )
 }
 
+function ThemeToggle({
+  theme,
+  onToggle,
+}: {
+  theme: Theme
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      onClick={onToggle}
+      aria-label={
+        theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+      }
+      title={
+        theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+      }
+    >
+      {theme === 'dark' ? '☀' : '☾'}
+    </button>
+  )
+}
+
 function AppHeader({
   view,
   onViewChange,
+  theme,
+  onThemeToggle,
 }: {
   view: AppView
   onViewChange: (view: AppView) => void
+  theme: Theme
+  onThemeToggle: () => void
 }) {
   return (
     <header className="workspace-topbar">
@@ -68,6 +104,7 @@ function AppHeader({
           Admin preview
         </button>
       </nav>
+      <ThemeToggle theme={theme} onToggle={onThemeToggle} />
     </header>
   )
 }
@@ -195,7 +232,15 @@ function SourcePanel({
             <strong>{document.display_name}</strong>
             <span>{size} · Stored privately</span>
           </div>
-          <span className="waiting-badge">
+          <span
+            className={
+              !ingesting && document.status === 'ready'
+                ? 'ready-badge'
+                : !ingesting && document.status === 'failed'
+                  ? 'error-badge'
+                  : 'waiting-badge'
+            }
+          >
             {ingesting
               ? 'Ingesting'
               : document.status === 'ready'
@@ -919,21 +964,16 @@ function ChatPanel({
               }
             }}
             placeholder="Ask about your PDF…"
-            rows={2}
+            rows={1}
           />
-          <div className="chat-composer__footer">
-            <span>
-              <kbd>↵</kbd> to send · <kbd>⇧ ↵</kbd> for new line
-            </span>
-            <button
-              type="submit"
-              className="send-button"
-              disabled={!draft.trim() || pendingAnswer !== null}
-              aria-label="Send message"
-            >
-              ↑
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="send-button"
+            disabled={!draft.trim() || pendingAnswer !== null}
+            aria-label="Send message"
+          >
+            ↑
+          </button>
         </form>
         <p>Answers will be limited to the active document.</p>
       </div>
@@ -1323,10 +1363,28 @@ function AdminPreview() {
 
 function App() {
   const [view, setView] = useState<AppView>('demo')
+  const [theme, setTheme] = useState<Theme>(initialTheme)
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme)
+    } catch {
+      // Private browsing or storage disabled: theme just won't persist.
+    }
+  }, [theme])
 
   return (
     <div className="workspace-shell">
-      <AppHeader view={view} onViewChange={setView} />
+      <AppHeader
+        view={view}
+        onViewChange={setView}
+        theme={theme}
+        onThemeToggle={() =>
+          setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
+        }
+      />
       {view === 'demo' ? <PublicDemo /> : <AdminPreview />}
     </div>
   )
