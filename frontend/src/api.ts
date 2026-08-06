@@ -93,6 +93,70 @@ export type IngestionReceipt = {
   document: DocumentRecord
 }
 
+export type MessageCitation = {
+  chunk_id: string
+  citation_order: number
+  excerpt: string
+  retrieval_score: number | null
+}
+
+export type MessageRecord = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  model: string | null
+  latency_ms: number | null
+  input_tokens: number | null
+  output_tokens: number | null
+  fallback_reason: string | null
+  citations: MessageCitation[]
+  created_at: string
+}
+
+type StreamCitation = {
+  chunk_id: string
+  page_start: number | null
+  page_end: number | null
+  excerpt: string
+  score: number
+}
+
+export type ChatStreamEvent =
+  | { event: 'started'; data: Record<string, never> }
+  | {
+      event: 'retrieval'
+      data: {
+        evidence_sufficient: boolean
+        chunk_count: number
+        chunks: Array<{
+          chunk_id: string
+          page_start: number | null
+          page_end: number | null
+          score: number
+        }>
+      }
+    }
+  | { event: 'token'; data: { text: string } }
+  | { event: 'citations'; data: { citations: StreamCitation[] } }
+  | {
+      event: 'usage'
+      data: { input_tokens: number; output_tokens: number; latency_ms: number }
+    }
+  | {
+      event: 'completed'
+      data: {
+        fallback: boolean
+        fallback_reason: string | null
+        answer: string
+        citations: StreamCitation[]
+        model: string | null
+        input_tokens: number
+        output_tokens: number
+        latency_ms: number
+      }
+    }
+  | { event: 'error'; data: { message: string } }
+
 type ErrorEnvelope = {
   error?: {
     message?: string
@@ -222,4 +286,103 @@ export async function startDocumentIngestion(
 
 export function documentSourceUrl(documentId: string): string {
   return url(`api/public/documents/${documentId}/source`)
+}
+
+export async function listMessages(
+  documentId: string,
+): Promise<MessageRecord[]> {
+  const payload = await jsonRequest<{ data: MessageRecord[] }>(
+    `api/public/documents/${documentId}/messages`,
+  )
+
+  return payload.data
+}
+
+function parseSseEvent(raw: string): ChatStreamEvent | null {
+  let eventName: string | null = null
+  const dataLines: string[] = []
+
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event: ')) {
+      eventName = line.slice('event: '.length)
+    } else if (line.startsWith('data: ')) {
+      dataLines.push(line.slice('data: '.length))
+    }
+  }
+
+  if (!eventName) {
+    return null
+  }
+
+  try {
+    const data = JSON.parse(dataLines.join('\n'))
+    return { event: eventName, data } as ChatStreamEvent
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Send a chat message and stream the grounded answer as Server-Sent Events.
+ * Uses fetch + ReadableStream (not EventSource) because the request needs a
+ * POST body; `signal` lets the caller cancel an in-flight answer.
+ */
+export async function sendChatMessage(
+  documentId: string,
+  content: string,
+  clientMessageId: string,
+  onEvent: (event: ChatStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers = await csrfHeaders()
+
+  const response = await fetch(
+    url(`api/public/documents/${documentId}/messages`),
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      signal,
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+      body: JSON.stringify({
+        content,
+        client_message_id: clientMessageId,
+      }),
+    },
+  )
+
+  if (!response.ok || !response.body) {
+    throw new Error(await errorMessage(response))
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+
+    let boundary = buffer.indexOf('\n\n')
+
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      const parsed = parseSseEvent(rawEvent)
+
+      if (parsed) {
+        onEvent(parsed)
+      }
+
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
 }

@@ -52,6 +52,7 @@ class Citation(BaseModel):
     page_start: int | None
     page_end: int | None
     excerpt: str
+    score: float
 
 
 class GeneratedAnswer(BaseModel):
@@ -68,13 +69,13 @@ class GeneratedAnswer(BaseModel):
     retrieval: RetrievalResult
 
 
-def _excerpt(text: str) -> str:
+def excerpt(text: str) -> str:
     if len(text) <= EXCERPT_MAX_CHARACTERS:
         return text
     return text[:EXCERPT_MAX_CHARACTERS].rstrip() + "…"
 
 
-def _build_evidence_block(retrieval: RetrievalResult) -> str:
+def build_evidence_block(retrieval: RetrievalResult) -> str:
     blocks = [
         f'<evidence id="{chunk.chunk_id}">\n{chunk.text}\n</evidence>'
         for chunk in retrieval.chunks
@@ -145,7 +146,7 @@ async def generate_answer(
 
     chunks_by_id = {chunk.chunk_id: chunk for chunk in retrieval.chunks}
     user_message = (
-        f"Question: {retrieval.query}\n\nEvidence:\n{_build_evidence_block(retrieval)}"
+        f"Question: {retrieval.query}\n\nEvidence:\n{build_evidence_block(retrieval)}"
     )
 
     started = time.monotonic()
@@ -203,7 +204,8 @@ async def generate_answer(
             chunk_id=chunk_id,
             page_start=chunks_by_id[chunk_id].page_start,
             page_end=chunks_by_id[chunk_id].page_end,
-            excerpt=_excerpt(chunks_by_id[chunk_id].text),
+            excerpt=excerpt(chunks_by_id[chunk_id].text),
+            score=chunks_by_id[chunk_id].score,
         )
         for chunk_id in valid_chunk_ids
     ]

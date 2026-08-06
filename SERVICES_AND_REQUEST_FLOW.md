@@ -35,7 +35,7 @@ support-copilot/
 ├── backend/                           Laravel API — sessions, auth, document lifecycle, admin API
 │   ├── app/Services/                    AiIngestionClient, DocumentIngestionLifecycle, ...
 │   └── storage/app/private/documents/   private PDF storage (shared by backend + queue)
-├── ai-service/                        FastAPI — parses, chunks, and embeds PDFs; stateless, no DB connection
+├── ai-service/                        FastAPI — parses, chunks, embeds, retrieves, and answers; read-only Postgres for retrieval
 ├── infrastructure/
 │   ├── nginx/                           serves the React build, proxies /api/* and /sanctum/* to PHP-FPM
 │   ├── php/                             Laravel runtime image and upload limits
@@ -54,7 +54,7 @@ worker; idle, no job dispatched yet)
 **Frontend** — `nginx` (public, serves the React build and proxies to
 `backend`); `frontend` is a dev-only Vite container, not part of production
 
-**Python** — `ai-service` (Uvicorn/FastAPI, loopback-only, no state)
+**Python** — `ai-service` (Uvicorn/FastAPI, loopback-only, read-only Postgres access for retrieval)
 
 **Data** — `postgres` (pgvector, `postgres_data` volume) and `redis` (AOF,
 `redis_data` volume)
@@ -99,6 +99,8 @@ React API client: [`frontend/src/api.ts`](frontend/src/api.ts).
 | GET | `/api/public/documents/{document}/source` | Stream the authorized PDF inline |
 | DELETE | `/api/public/documents/{document}` | Delete an owned document and its source |
 | POST | `/api/public/documents/{document}/ingestions` | Send an owned PDF to FastAPI and persist the result |
+| GET | `/api/public/documents/{document}/messages` | Restore conversation history (messages + citations) |
+| POST | `/api/public/documents/{document}/messages` | Ask a question; streams a grounded answer as Server-Sent Events |
 | GET | `/sanctum/csrf-cookie` | Initialize CSRF protection before any mutation |
 
 Mutating requests need `X-XSRF-TOKEN` from that cookie. Upload accepts PDF
@@ -130,12 +132,13 @@ authentication and administrator authorization.
 | GET | `/health` | Internal health check |
 | POST | `/internal/ingestions` | Parse, chunk, and embed a PDF; return a full receipt (incl. vectors) for Laravel to persist |
 | POST | `/internal/retrieval` | Embed a query and return the top-k chunks of one `document_version_id` above a relevance threshold (exact cosine search, pgvector) |
-| POST | `/internal/answers` | Run retrieval, then ask the answer model for a grounded, cited response — or a safe fallback when evidence is insufficient |
+| POST | `/internal/answers` | Run retrieval, then ask the answer model for a grounded, cited response in one non-streaming call — or a safe fallback when evidence is insufficient. Used for inspection; the public chat endpoint calls `/internal/answers/stream` instead |
+| POST | `/internal/answers/stream` | Same capability as `/internal/answers`, but streams the answer as Server-Sent Events. Backs the public chat endpoint |
 
 Not exposed publicly; Swagger UI is available on a dev-only loopback listener
-at `/docs`. The caller must resolve `document_version_id` to the document's
-active, `ready` version — this service only ever searches within the exact ID
-it's given. No public chat endpoint calls these yet (see section 6).
+at `/docs`. Laravel is the only caller — see section 6. The caller must
+resolve `document_version_id` to the document's active, `ready` version —
+this service only ever searches within the exact ID it's given.
 
 ## 5. Current guest flow
 
@@ -187,46 +190,51 @@ Laravel (Nginx → PHP-FPM)
 Response → React (latest document + ingestion receipt)
 ```
 
-The chat composer unlocks once the document is `ready`, but there is no chat
-backend yet — submitting a question just shows a static "not connected"
-message. Retrieval and grounded generation already work internally (below);
-only the public chat endpoint that would call them is still planned.
+The chat composer unlocks once the document is `ready` and sends real
+questions to the streaming chat endpoint below.
 
-## 6. Grounded-answer generation
-
-`POST /internal/answers` is implemented (dev/Swagger only for now — no public
-route calls it yet):
+## 6. Grounded-answer chat
 
 ```text
-POST /internal/answers
-   │  {document_version_id, query, top_k?, min_score?}
+Browser (React)
+   │  POST /api/public/documents/{id}/messages  {content, client_message_id}
    ▼
-FastAPI (ai-service)
-   ├─ retrieve_chunks()  (embed query → cosine search on pgvector, scoped
-   │                      to exactly document_version_id — same logic as
-   │                      /internal/retrieval, section 4.3)
-   │
-   ├─ (no evidence)  return a fixed fallback, skip the model call entirely
-   │
-   └─ (evidence found)
-         ├─ build an evidence block: each chunk wrapped in
-         │    <evidence id="chunk_id">...</evidence>, marked as untrusted
-         │    data in the system instruction — never as instructions
-         ├─ client.responses.parse() → structured output:
-         │    {sufficient_evidence, answer, citation_chunk_ids}
-         ├─ drop any citation_chunk_ids not in the retrieved set
-         └─ (model abstained, or zero valid citations remain) → fallback
+Laravel — PublicMessageController
+   │  → validate session/document access; document must be `ready`
+   │  → find-or-create the (session, document) conversation
+   │  → client_message_id already answered? → replay the stored reply,
+   │    no FastAPI call (retry-safe)
+   │  → otherwise persist the user message, then relay:
    ▼
-GeneratedAnswer
-   { answer, fallback, fallback_reason, model,
-     input_tokens, output_tokens, latency_ms,
-     citations: [{chunk_id, page_start, page_end, excerpt}, ...] }
-                                             ↑ excerpt is always read back
-                                               from stored chunk text
+AiAnswerClient::stream()  →  POST /internal/answers/stream (FastAPI)
+   │
+   FastAPI
+      ├─ retrieve_chunks()  (same logic as /internal/retrieval)
+      ├─ (no evidence) → completed event, fallback, no model call
+      └─ (evidence found)
+            ├─ client.responses.create(stream=True) → real tokens as the
+            │    model generates them (plain text — structured output
+            │    can't be shown readably mid-stream)
+            └─ once the answer is fully streamed, a small separate
+                 structured call attributes citations to it, validated
+                 against the retrieved chunk set
+   ▼
+SSE relayed live, unbuffered, straight to the browser:
+   started → retrieval → token × N → citations → usage → completed
+   ▼
+Laravel reads the same events, then persists the assistant message,
+citations, and one usage_events row (event_type=chat) once `completed`
+arrives.
 ```
 
-The model only ever names a `chunk_id`; it cannot supply its own citation
-text, excerpt, or source label — the application resolves those from the
-chunk actually retrieved. Wiring this up to a public, streaming chat endpoint
-with session/document/quota validation and persisted messages is still
-planned (see the project's implementation plan for that stage).
+This differs from the non-streaming `/internal/answers` (section 4.3) in one
+deliberate way: it never discards text already streamed to the user. If the
+model finds the retrieved evidence doesn't actually answer the question, it
+says so in its own words and citations end up empty, rather than the answer
+being swapped for a canned fallback mid-stream. Retrieval-level insufficiency
+(no relevant chunks at all) is still resolved before any model call, so
+unsupported questions never stream a partial answer either way.
+
+Cancelling (closing the tab, the composer's "Stop generating") aborts the
+fetch; Laravel and FastAPI both detect the dropped connection and stop
+without persisting a partial assistant reply.

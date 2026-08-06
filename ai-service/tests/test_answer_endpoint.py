@@ -113,6 +113,7 @@ def test_answer_returns_a_grounded_response_with_citations() -> None:
             "page_start": 1,
             "page_end": 1,
             "excerpt": "Refunds are available within 30 days of purchase.",
+            "score": 0.9,
         }
     ]
     assert payload["retrieval"]["evidence_sufficient"] is True

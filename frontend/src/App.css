@@ -1634,6 +1634,40 @@ textarea:focus-visible {
   font-weight: 850;
 }
 
+.citation-excerpt {
+  margin: 10px 0 0;
+  border-left: 2px solid #294c43;
+  padding: 8px 12px;
+  color: #93a2ac;
+  background: #0f1720;
+  font-size: 0.68rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.pending-answer__status {
+  color: #7c8998;
+  font-style: italic;
+}
+
+.stop-generating {
+  margin-top: 12px;
+  border: 1px solid #334055;
+  border-radius: 999px;
+  min-height: 30px;
+  padding: 0 12px;
+  color: #b2bdc9;
+  background: #101721;
+  font: inherit;
+  font-size: 0.63rem;
+  cursor: pointer;
+}
+
+.stop-generating:hover {
+  border-color: #4a5b73;
+  color: #e4e9ef;
+}
+
 .message__meta {
   display: flex;
   align-items: center;

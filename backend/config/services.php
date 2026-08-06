@@ -38,6 +38,9 @@ return [
     'ai_service' => [
         'url' => env('AI_SERVICE_URL', 'http://ai-service:8000'),
         'timeout' => (int) env('AI_SERVICE_TIMEOUT', 30),
+        // Chat streaming can legitimately run longer than a single request/
+        // response call (retrieval + a full streamed model turn).
+        'stream_timeout' => (int) env('AI_SERVICE_STREAM_TIMEOUT', 120),
     ],
 
 ];

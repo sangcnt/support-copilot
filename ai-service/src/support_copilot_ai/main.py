@@ -1,12 +1,24 @@
 import asyncio
 import hashlib
+import json
 import logging
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated, Literal
 
 import asyncpg
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -15,6 +27,7 @@ from support_copilot_ai.answer_generator import (
     GenerationError,
     generate_answer,
 )
+from support_copilot_ai.answer_streamer import StreamError, stream_answer
 from support_copilot_ai.chunk_retriever import (
     AsyncpgChunkRepository,
     ChunkRepository,
@@ -505,3 +518,85 @@ async def answer(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The answer model could not be called.",
         ) from exception
+
+
+def _format_sse(event: str, data: dict) -> bytes:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
+
+
+async def _sse_body(
+    http_request: Request,
+    document_version_id: str,
+    events,  # AsyncIterator[StreamEvent]
+) -> AsyncIterator[bytes]:
+    try:
+        async for event in events:
+            if await http_request.is_disconnected():
+                logger.info(
+                    "Client disconnected mid-stream document_version_id=%s",
+                    document_version_id,
+                )
+                break
+
+            yield _format_sse(event.event, event.data)
+    except StreamError as exception:
+        logger.exception(
+            "Answer stream failed document_version_id=%s",
+            document_version_id,
+        )
+        yield _format_sse("error", {"message": str(exception)})
+
+
+@app.post(
+    "/internal/answers/stream",
+    tags=["generation"],
+    summary="Stream a grounded answer as Server-Sent Events",
+)
+async def answer_stream(
+    http_request: Request,
+    request: AnswerRequest,
+    embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
+    repository: Annotated[ChunkRepository, Depends(get_chunk_repository)] = None,  # type: ignore[assignment]
+    client: Annotated[AsyncOpenAI | None, Depends(get_answer_model_client)] = None,
+) -> StreamingResponse:
+    """Same grounded-answer capability as `/internal/answers`, but streams the
+    visible answer text token by token as Server-Sent Events instead of
+    waiting for the full response. See `stream_answer()` for the event
+    sequence and how it differs from the non-streaming path.
+    """
+
+    _require_document_version_id_and_query(request.document_version_id, request.query)
+
+    if embedder is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The embedding provider is not configured.",
+        )
+
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The answer model is not configured.",
+        )
+
+    top_k, min_score = _resolve_retrieval_params(request.top_k, request.min_score)
+
+    events = stream_answer(
+        client=client,
+        chat_model=settings.openai_chat_model,
+        embedder=embedder,
+        repository=repository,
+        document_version_id=request.document_version_id,
+        query=request.query,
+        top_k=top_k,
+        min_score=min_score,
+    )
+
+    return StreamingResponse(
+        _sse_body(http_request, request.document_version_id, events),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

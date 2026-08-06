@@ -3,11 +3,16 @@ import {
   deleteDocument,
   documentSourceUrl,
   listDocuments,
+  listMessages,
+  sendChatMessage,
   startAnonymousSession,
   startDocumentIngestion,
   uploadDocument,
+  type ChatStreamEvent,
   type DocumentRecord,
   type IngestionReceipt,
+  type MessageCitation,
+  type MessageRecord,
 } from './api'
 import './App.css'
 
@@ -262,6 +267,61 @@ function SourcePanel({
   )
 }
 
+type PendingAnswer = {
+  content: string
+  citations: MessageCitation[]
+  chunkCount: number | null
+  evidenceSufficient: boolean | null
+}
+
+function CitationList({
+  citations,
+  messageKey,
+  expanded,
+  onToggle,
+}: {
+  citations: MessageCitation[]
+  messageKey: string
+  expanded: string | null
+  onToggle: (id: string | null) => void
+}) {
+  if (citations.length === 0) {
+    return null
+  }
+
+  const openCitation = citations.find(
+    (citation) => expanded === `${messageKey}:${citation.chunk_id}`,
+  )
+
+  return (
+    <>
+      <div className="citations">
+        {citations.map((citation) => {
+          const id = `${messageKey}:${citation.chunk_id}`
+          const isOpen = expanded === id
+
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-expanded={isOpen}
+              onClick={() => onToggle(isOpen ? null : id)}
+            >
+              <span aria-hidden="true">{citation.citation_order}</span>
+              Source {citation.citation_order}
+            </button>
+          )
+        })}
+      </div>
+      {openCitation && (
+        <blockquote className="citation-excerpt">
+          {openCitation.excerpt}
+        </blockquote>
+      )}
+    </>
+  )
+}
+
 function ChatPanel({
   document,
   ingesting,
@@ -276,19 +336,198 @@ function ChatPanel({
   onStartIngestion: () => void
 }) {
   const [draft, setDraft] = useState('')
-  const [submittedQuestion, setSubmittedQuestion] = useState<string | null>(
-    null,
-  )
+  const [messages, setMessages] = useState<MessageRecord[]>([])
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null)
+  const [pendingAnswer, setPendingAnswer] = useState<PendingAnswer | null>(null)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [expandedCitation, setExpandedCitation] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const pendingAnswerRef = useRef<PendingAnswer | null>(null)
 
-  const submitQuestion = (question: string) => {
-    const normalizedQuestion = question.trim()
+  const documentId = document?.id
+  const documentReady = document?.status === 'ready'
 
-    if (!normalizedQuestion) {
+  useEffect(() => {
+    let active = true
+
+    if (!documentId || !documentReady) {
+      setMessages([])
       return
     }
 
-    setSubmittedQuestion(normalizedQuestion)
+    listMessages(documentId)
+      .then((history) => {
+        if (active) {
+          setMessages(history)
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to load the conversation history.',
+          )
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [documentId, documentReady])
+
+  useEffect(() => {
+    // Cancel any in-flight answer if the user switches to a different
+    // document while a response is still streaming.
+    return () => {
+      abortRef.current?.abort()
+    }
+  }, [documentId])
+
+  const updatePending = (patch: Partial<PendingAnswer>) => {
+    pendingAnswerRef.current = pendingAnswerRef.current && {
+      ...pendingAnswerRef.current,
+      ...patch,
+    }
+    setPendingAnswer(pendingAnswerRef.current)
+  }
+
+  const submitQuestion = async (question: string) => {
+    const normalizedQuestion = question.trim()
+
+    if (!normalizedQuestion || pendingAnswer || !documentId) {
+      return
+    }
+
     setDraft('')
+    setSendError(null)
+    setPendingQuestion(normalizedQuestion)
+    pendingAnswerRef.current = {
+      content: '',
+      citations: [],
+      chunkCount: null,
+      evidenceSufficient: null,
+    }
+    setPendingAnswer(pendingAnswerRef.current)
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    const clientMessageId = crypto.randomUUID()
+    const startedAt = `${new Date().toISOString()}`
+
+    const finish = (
+      answer: string,
+      citations: MessageCitation[],
+      extra: Partial<MessageRecord> = {},
+    ) => {
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: `local-user-${clientMessageId}`,
+          role: 'user',
+          content: normalizedQuestion,
+          model: null,
+          latency_ms: null,
+          input_tokens: null,
+          output_tokens: null,
+          fallback_reason: null,
+          citations: [],
+          created_at: startedAt,
+        },
+        {
+          id: `local-assistant-${clientMessageId}`,
+          role: 'assistant',
+          content: answer,
+          model: null,
+          latency_ms: null,
+          input_tokens: null,
+          output_tokens: null,
+          fallback_reason: null,
+          citations,
+          created_at: startedAt,
+          ...extra,
+        },
+      ])
+      pendingAnswerRef.current = null
+      setPendingAnswer(null)
+      setPendingQuestion(null)
+    }
+
+    try {
+      await sendChatMessage(
+        documentId,
+        normalizedQuestion,
+        clientMessageId,
+        (event: ChatStreamEvent) => {
+          if (event.event === 'retrieval') {
+            updatePending({
+              chunkCount: event.data.chunk_count,
+              evidenceSufficient: event.data.evidence_sufficient,
+            })
+          } else if (event.event === 'token') {
+            updatePending({
+              content:
+                (pendingAnswerRef.current?.content ?? '') + event.data.text,
+            })
+          } else if (event.event === 'citations') {
+            updatePending({
+              citations: event.data.citations.map((citation, index) => ({
+                chunk_id: citation.chunk_id,
+                citation_order: index + 1,
+                excerpt: citation.excerpt,
+                retrieval_score: citation.score,
+              })),
+            })
+          } else if (event.event === 'completed') {
+            finish(
+              event.data.answer,
+              event.data.citations.map((citation, index) => ({
+                chunk_id: citation.chunk_id,
+                citation_order: index + 1,
+                excerpt: citation.excerpt,
+                retrieval_score: citation.score,
+              })),
+              {
+                model: event.data.model,
+                latency_ms: event.data.latency_ms,
+                input_tokens: event.data.input_tokens,
+                output_tokens: event.data.output_tokens,
+                fallback_reason: event.data.fallback_reason,
+              },
+            )
+          } else if (event.event === 'error') {
+            setSendError(event.data.message)
+          }
+        },
+        controller.signal,
+      )
+    } catch (error) {
+      const cancelled = controller.signal.aborted
+      const partial = pendingAnswerRef.current
+
+      if (cancelled && partial && partial.content) {
+        finish(`${partial.content}\n\n*Stopped.*`, partial.citations)
+      } else {
+        if (!cancelled) {
+          setSendError(
+            error instanceof Error
+              ? error.message
+              : 'The answer stream failed. Please try again.',
+          )
+        }
+
+        pendingAnswerRef.current = null
+        setPendingAnswer(null)
+        setPendingQuestion(null)
+      }
+    } finally {
+      abortRef.current = null
+    }
+  }
+
+  const cancelStreaming = () => {
+    abortRef.current?.abort()
   }
 
   if (!document) {
@@ -546,21 +785,102 @@ function ChatPanel({
           </p>
         )}
 
-        {submittedQuestion && (
-          <>
-            <article className="message message--user">
-              <div className="message__content">
-                <p>{submittedQuestion}</p>
-              </div>
-            </article>
-            <div className="chat-error" role="alert">
-              <span aria-hidden="true">!</span>
-              <div>
-                <strong>Chat is not connected yet</strong>
-                <p>Retrieval and grounded answers are implemented next.</p>
-              </div>
+        {historyError && (
+          <div className="chat-error" role="alert">
+            <span aria-hidden="true">!</span>
+            <div>
+              <strong>Could not load conversation history</strong>
+              <p>{historyError}</p>
             </div>
-          </>
+          </div>
+        )}
+
+        {messages.map((message) => (
+          <article
+            key={message.id}
+            className={`message message--${message.role}`}
+          >
+            {message.role === 'assistant' && (
+              <div
+                className="assistant-avatar assistant-avatar--small"
+                aria-hidden="true"
+              >
+                C
+              </div>
+            )}
+            <div className="message__content">
+              <p>{message.content}</p>
+              <CitationList
+                citations={message.citations}
+                messageKey={message.id}
+                expanded={expandedCitation}
+                onToggle={setExpandedCitation}
+              />
+              {message.role === 'assistant' && message.model && (
+                <div className="message__meta">
+                  <span>{message.model}</span>
+                  {message.latency_ms !== null && (
+                    <span>{(message.latency_ms / 1000).toFixed(1)}s</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </article>
+        ))}
+
+        {pendingQuestion && (
+          <article className="message message--user">
+            <div className="message__content">
+              <p>{pendingQuestion}</p>
+            </div>
+          </article>
+        )}
+
+        {pendingAnswer && (
+          <article className="message message--assistant">
+            <div
+              className="assistant-avatar assistant-avatar--small"
+              aria-hidden="true"
+            >
+              C
+            </div>
+            <div className="message__content">
+              {pendingAnswer.content ? (
+                <p>{pendingAnswer.content}</p>
+              ) : (
+                <p className="pending-answer__status">
+                  {pendingAnswer.evidenceSufficient === false
+                    ? 'No matching passages found…'
+                    : pendingAnswer.evidenceSufficient === true
+                      ? `Found ${pendingAnswer.chunkCount ?? 0} relevant passages, writing an answer…`
+                      : 'Reading the document…'}
+                </p>
+              )}
+              <CitationList
+                citations={pendingAnswer.citations}
+                messageKey="pending"
+                expanded={expandedCitation}
+                onToggle={setExpandedCitation}
+              />
+              <button
+                type="button"
+                className="stop-generating"
+                onClick={cancelStreaming}
+              >
+                Stop generating
+              </button>
+            </div>
+          </article>
+        )}
+
+        {sendError && (
+          <div className="chat-error" role="alert">
+            <span aria-hidden="true">!</span>
+            <div>
+              <strong>The answer stream failed</strong>
+              <p>{sendError}</p>
+            </div>
+          </div>
         )}
       </div>
 
@@ -572,7 +892,8 @@ function ChatPanel({
               <button
                 key={question}
                 type="button"
-                onClick={() => submitQuestion(question)}
+                disabled={pendingAnswer !== null}
+                onClick={() => void submitQuestion(question)}
               >
                 {question}
               </button>
@@ -582,18 +903,19 @@ function ChatPanel({
         <form
           onSubmit={(event) => {
             event.preventDefault()
-            submitQuestion(draft)
+            void submitQuestion(draft)
           }}
         >
           <label htmlFor="chat-draft">Ask about this document</label>
           <textarea
             id="chat-draft"
             value={draft}
+            disabled={pendingAnswer !== null}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
-                submitQuestion(draft)
+                void submitQuestion(draft)
               }
             }}
             placeholder="Ask about your PDF…"
@@ -606,7 +928,7 @@ function ChatPanel({
             <button
               type="submit"
               className="send-button"
-              disabled={!draft.trim()}
+              disabled={!draft.trim() || pendingAnswer !== null}
               aria-label="Send message"
             >
               ↑

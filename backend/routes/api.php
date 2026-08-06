@@ -6,6 +6,7 @@ use App\Http\Controllers\AdminDocumentController;
 use App\Http\Controllers\AdminUsageController;
 use App\Http\Controllers\PublicDocumentController;
 use App\Http\Controllers\PublicDocumentIngestionController;
+use App\Http\Controllers\PublicMessageController;
 use App\Http\Controllers\PublicSessionController;
 use Illuminate\Support\Facades\Route;
 
@@ -30,6 +31,10 @@ Route::prefix('public')->group(function (): void {
         ->middleware(['anonymous.session', 'document.owner']);
     Route::post('/documents/{document}/ingestions', PublicDocumentIngestionController::class)
         ->middleware(['anonymous.session', 'document.owner']);
+    Route::get('/documents/{document}/messages', [PublicMessageController::class, 'index'])
+        ->middleware(['anonymous.session', 'document.access']);
+    Route::post('/documents/{document}/messages', [PublicMessageController::class, 'store'])
+        ->middleware(['anonymous.session', 'document.access']);
 });
 
 Route::prefix('auth')->group(function (): void {
