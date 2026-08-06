@@ -129,9 +129,12 @@ authentication and administrator authorization.
 |---|---|---|
 | GET | `/health` | Internal health check |
 | POST | `/internal/ingestions` | Parse, chunk, and embed a PDF; return a full receipt (incl. vectors) for Laravel to persist |
+| POST | `/internal/retrieval` | Embed a query and return the top-k chunks of one `document_version_id` above a relevance threshold (exact cosine search, pgvector) |
 
 Not exposed publicly; Swagger UI is available on a dev-only loopback listener
-at `/docs`. Retrieval and generation routes do not exist yet.
+at `/docs`. The caller must resolve `document_version_id` to the document's
+active, `ready` version — this service only ever searches within the exact ID
+it's given. Generation routes do not exist yet.
 
 ## 5. Current guest flow
 
@@ -185,43 +188,45 @@ Response → React (latest document + ingestion receipt)
 
 The chat composer unlocks once the document is `ready`, but there is no chat
 backend yet — submitting a question just shows a static "not connected"
-message until retrieval and generation (section 6) are built.
+message until a public chat endpoint and grounded generation (section 6) are
+built. Retrieval itself already works internally.
 
-## 6. Planned retrieval and grounded-answer flow
+## 6. Retrieval and planned grounded-answer flow
 
-Ingestion (parsing, chunking, embedding, and persistence) is already
-implemented — see [section 5](#5-current-guest-flow). What is still planned is
-turning a question into a grounded, cited answer:
+Ingestion (section 5) and retrieval are implemented. Turning a retrieved
+chunk set into a grounded, cited answer is still planned:
 
 ```text
-Browser (React)
-   │  POST <public chat endpoint — route not yet defined>
-   ▼
-Laravel API
-   │  → validate session, document ownership, and quota
-   │  → forward to FastAPI grounded-answer workflow
+POST /internal/retrieval   (implemented, internal — dev/Swagger only for now)
+   │  {document_version_id, query, top_k?, min_score?}
    ▼
 FastAPI (ai-service)
-   │
-   ├─ embed the user question (same embedding model as ingestion)
-   │        │
-   │        ▼
-   ├─ query `chunks` in Postgres/pgvector
-   │     → cosine search, filtered by active document_version_id
-   │     → top-k above a minimum relevance threshold
-   │        │
-   │        ▼
+   ├─ normalize_query() → embed via OpenAI (same model as ingestion)
+   ├─ AsyncpgChunkRepository.search()
+   │     → cosine search on chunks.embedding (pgvector), scoped to
+   │       exactly the given document_version_id
+   │     → top-k, ordered by similarity
+   └─ keep only chunks scoring ≥ min_score → evidence_sufficient
+   ▼
+RetrievalResult {chunks: [{chunk_id, page_start, page_end, text, score}, ...]}
+
+──────────────────────────────────────────────────────────────
+
+Browser (React)
+   │  POST <public chat endpoint — route not yet defined>          (planned)
+   ▼
+Laravel API → validate session/document/quota → forward to FastAPI
+   ▼
+FastAPI: run retrieval above, then
    ├─ (evidence found)  build prompt from retrieved chunks → call answer model
    │        → structured output: answer + citation chunk_id(s)
-   │
    └─ (no evidence)     return an insufficient-evidence fallback, skip the model call
    ▼
-Laravel API
-   │  → validate every citation resolves to a chunk actually retrieved
-   │  → resolve chunk_id → excerpt/page/document name for the client
-   │  → persist message, citations, and usage_events
+Laravel: validate citations resolve to retrieved chunks → persist message,
+citations, usage_events
    ▼
 Response (streamed) → React renders the answer with clickable citations
 ```
 
-No route names are defined yet, to avoid publishing an untested contract.
+No public chat route name is defined yet, to avoid publishing an untested
+contract.

@@ -68,6 +68,47 @@ class DocumentEmbedder:
         self._dimensions = dimensions
         self._batch_size = batch_size
 
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    async def embed_text(self, text: str) -> list[float]:
+        """Embed a single ad-hoc string, such as a retrieval query.
+
+        Uses the same model and dimensions as `embed()` so query vectors and
+        chunk vectors remain comparable.
+        """
+
+        try:
+            response = await self._client.embeddings.create(
+                model=self._model,
+                input=[text],
+                encoding_format="float",
+                dimensions=self._dimensions,
+            )
+        except Exception as exception:
+            raise DocumentEmbeddingError(
+                "The embedding provider request failed."
+            ) from exception
+
+        if len(response.data) != 1:
+            raise DocumentEmbeddingError(
+                "The embedding provider returned an unexpected result count."
+            )
+
+        vector = response.data[0].embedding
+
+        if len(vector) != self._dimensions:
+            raise DocumentEmbeddingError(
+                "The embedding provider returned unexpected dimensions."
+            )
+
+        return vector
+
     async def embed(self, document: ChunkedDocument) -> EmbeddedDocument:
         if not document.chunks:
             return EmbeddedDocument(

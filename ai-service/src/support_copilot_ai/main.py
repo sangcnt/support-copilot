@@ -1,13 +1,22 @@
+import asyncio
 import hashlib
 import logging
 from functools import lru_cache
 from typing import Annotated, Literal
 
+import asyncpg
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from support_copilot_ai.chunk_retriever import (
+    AsyncpgChunkRepository,
+    ChunkRepository,
+    RetrievalError,
+    RetrievalResult,
+    retrieve_chunks,
+)
 from support_copilot_ai.config import get_settings
 from support_copilot_ai.document_chunker import ChunkedDocument, DocumentChunker
 from support_copilot_ai.document_embedder import (
@@ -75,13 +84,68 @@ def get_document_embedder() -> DocumentEmbedder | None:
     )
 
 
+_db_pool: asyncpg.Pool | None = None
+_db_pool_lock = asyncio.Lock()
+
+
+async def get_db_pool() -> asyncpg.Pool | None:
+    """Lazily create and cache the retrieval database pool.
+
+    Deliberately not created via a FastAPI lifespan hook: httpx's
+    ASGITransport does not run the lifespan protocol by default, and a plain
+    async dependency is simpler to override in tests than app.state.
+    """
+
+    global _db_pool
+
+    if _db_pool is not None:
+        return _db_pool
+
+    if not settings.db_host:
+        return None
+
+    async with _db_pool_lock:
+        if _db_pool is None:
+            _db_pool = await asyncpg.create_pool(
+                host=settings.db_host,
+                port=settings.db_port,
+                database=settings.db_database,
+                user=settings.db_username,
+                password=settings.db_password,
+                min_size=1,
+                max_size=5,
+            )
+
+    return _db_pool
+
+
+async def get_chunk_repository() -> ChunkRepository:
+    pool = await get_db_pool()
+
+    if pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The retrieval store is not configured.",
+        )
+
+    return AsyncpgChunkRepository(pool)
+
+
+class RetrievalRequest(BaseModel):
+    document_version_id: str
+    query: str
+    top_k: int | None = None
+    min_score: float | None = None
+
+
 app = FastAPI(
     title="Support Copilot AI Service",
     description=(
-        "Internal AI workflow API. The ingestion endpoint receives a PDF and "
-        "extracts normalized text with page and line metadata, then creates "
-        "deterministic token-aware chunks and batched embeddings. Persistence "
-        "is not implemented yet."
+        "Internal AI workflow API. The ingestion endpoint parses a PDF, "
+        "chunks it, and embeds each chunk for Laravel to persist. The "
+        "retrieval endpoint embeds a query and returns the most relevant "
+        "chunks of one document version by cosine similarity. Grounded "
+        "generation is not implemented yet."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -114,15 +178,10 @@ async def receive_ingestion(
     ] = None,
     embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
 ) -> IngestionReceipt:
-    """Orchestrate the ingestion pipeline for one document version.
+    """Receive, parse, chunk, and embed one PDF document version.
 
-    This endpoint should coordinate the numbered pipeline steps. The detailed work
-    for each step belongs in focused parser, chunker, embedding, and repository
-    services so this HTTP handler remains easy to follow and test.
-
-    Currently implemented: source receipt/validation, step 3 (PDF parsing), step
-    4 (deterministic chunking), and step 5 (batched embeddings). Steps 6-8 remain
-    intentionally unimplemented.
+    Persistence (steps 6-8) happens in Laravel after this receipt is
+    returned; this service does not write to any database itself.
     """
 
     # Steps 1-2 (implemented): receive the authorized PDF source and validate the
@@ -210,11 +269,10 @@ async def receive_ingestion(
             detail="The document could not be embedded.",
         ) from exception
 
-    # Planned pipeline continuation (not implemented in this step):
-    # Step 6: persist chunks, embeddings, and metadata in one transaction.
-    # Step 7: mark the document version as ready only after persistence succeeds.
-    # Step 8: on failure, persist a safe user-facing reason separately from the
-    #         internal diagnostic details used in logs and debugging.
+    # Steps 6-8 (persist chunks/vectors, mark ready, record safe failure
+    # reasons) happen in Laravel's DocumentIngestionLifecycle after this
+    # receipt is returned. This service stays stateless and does not write
+    # to any database itself.
 
     logger.info(
         "Received ingestion source document_version_id=%s filename=%r "
@@ -243,3 +301,88 @@ async def receive_ingestion(
         embedding=EmbeddingSummary.from_document(embedded_document),
         embedding_records=embedded_document.embeddings,
     )
+
+
+@app.post(
+    "/internal/retrieval",
+    response_model=RetrievalResult,
+    tags=["retrieval"],
+    summary="Embed a query and retrieve relevant chunks of one document version",
+)
+async def retrieve(
+    request: RetrievalRequest,
+    embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
+    repository: Annotated[ChunkRepository, Depends(get_chunk_repository)] = None,  # type: ignore[assignment]
+) -> RetrievalResult:
+    """Development-facing retrieval inspection endpoint.
+
+    Every result is scoped to exactly `document_version_id` — the caller
+    (Laravel) is responsible for resolving that ID to the document's active,
+    `ready` version before calling this endpoint. This service never searches
+    across documents or versions on its own.
+    """
+
+    if not request.document_version_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="document_version_id is required.",
+        )
+
+    if not request.query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="query is required.",
+        )
+
+    if embedder is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The embedding provider is not configured.",
+        )
+
+    top_k = request.top_k if request.top_k is not None else settings.retrieval_top_k
+    min_score = (
+        request.min_score
+        if request.min_score is not None
+        else settings.retrieval_min_score
+    )
+
+    if not 1 <= top_k <= 20:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="top_k must be between 1 and 20.",
+        )
+
+    if not 0.0 <= min_score <= 1.0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="min_score must be between 0 and 1.",
+        )
+
+    try:
+        return await retrieve_chunks(
+            embedder=embedder,
+            repository=repository,
+            document_version_id=request.document_version_id,
+            query=request.query,
+            top_k=top_k,
+            min_score=min_score,
+        )
+    except DocumentEmbeddingError as exception:
+        logger.exception(
+            "Unable to embed retrieval query document_version_id=%s",
+            request.document_version_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The query could not be embedded.",
+        ) from exception
+    except RetrievalError as exception:
+        logger.exception(
+            "Unable to query the retrieval store document_version_id=%s",
+            request.document_version_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The retrieval store could not be queried.",
+        ) from exception

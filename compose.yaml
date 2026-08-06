@@ -132,10 +132,20 @@ services:
       AI_LOG_LEVEL: ${AI_LOG_LEVEL:-INFO}
       AI_PROVIDER: ${AI_PROVIDER:-openai}
       AI_EMBEDDING_BATCH_SIZE: ${AI_EMBEDDING_BATCH_SIZE:-32}
+      AI_RETRIEVAL_TOP_K: ${AI_RETRIEVAL_TOP_K:-5}
+      AI_RETRIEVAL_MIN_SCORE: ${AI_RETRIEVAL_MIN_SCORE:-0.2}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
       OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-support_copilot}
+      DB_USERNAME: ${DB_USERNAME:-support_copilot}
+      DB_PASSWORD: ${DB_PASSWORD:-support_copilot}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${AI_APP_PORT:-8030}:8000"
     healthcheck:
