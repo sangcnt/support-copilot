@@ -16,6 +16,7 @@ from support_copilot_ai.chunk_retriever import (
     retrieve_chunks,
 )
 from support_copilot_ai.document_embedder import DocumentEmbedder
+from support_copilot_ai.query_translator import build_query_translator
 
 STREAMING_SYSTEM_INSTRUCTION = """You are a support assistant that answers questions \
 using ONLY the evidence provided below. Follow these rules strictly:
@@ -123,6 +124,7 @@ async def stream_answer(
         query=query,
         top_k=top_k,
         min_score=min_score,
+        translator=build_query_translator(client, chat_model),
     )
 
     yield StreamEvent(

@@ -5,6 +5,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from support_copilot_ai.document_embedder import DocumentEmbedder
+from support_copilot_ai.query_translator import QueryTranslator
 
 RETRIEVAL_SQL = """
     SELECT
@@ -123,11 +124,18 @@ async def retrieve_chunks(
     query: str,
     top_k: int,
     min_score: float,
+    translator: QueryTranslator | None = None,
 ) -> RetrievalResult:
     """Embed a query and return document-scoped chunks above a relevance
     threshold. The caller is responsible for resolving `document_version_id`
     to the document's active version; every result is scoped to exactly that
-    version, never across documents or versions."""
+    version, never across documents or versions.
+
+    If nothing clears the threshold and a `translator` is supplied, retry
+    once with the query rewritten into the language of the nearest (still
+    below-threshold) chunk - a query in a different language than the
+    document can otherwise score too low to retrieve anything at all, even
+    when the document does cover it."""
 
     normalized_query = normalize_query(query)
     query_vector = await embedder.embed_text(normalized_query)
@@ -139,6 +147,24 @@ async def retrieve_chunks(
     )
 
     relevant = [row for row in rows if row.score >= min_score]
+
+    if not relevant and translator is not None and rows:
+        translated_query = await translator(normalized_query, rows[0].text)
+
+        if translated_query and translated_query != normalized_query:
+            translated_vector = await embedder.embed_text(translated_query)
+            translated_rows = await repository.search(
+                document_version_id=document_version_id,
+                query_vector=translated_vector,
+                top_k=top_k,
+            )
+            translated_relevant = [
+                row for row in translated_rows if row.score >= min_score
+            ]
+
+            if translated_relevant:
+                rows = translated_rows
+                relevant = translated_relevant
 
     return RetrievalResult(
         document_version_id=document_version_id,

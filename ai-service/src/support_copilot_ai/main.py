@@ -44,6 +44,7 @@ from support_copilot_ai.document_embedder import (
     EmbeddingSummary,
 )
 from support_copilot_ai.pdf_parser import ParsedDocument, PdfParser, PdfParsingError
+from support_copilot_ai.query_translator import build_query_translator
 
 
 class HealthResponse(BaseModel):
@@ -396,6 +397,7 @@ async def retrieve(
     request: RetrievalRequest,
     embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
     repository: Annotated[ChunkRepository, Depends(get_chunk_repository)] = None,  # type: ignore[assignment]
+    client: Annotated[AsyncOpenAI | None, Depends(get_answer_model_client)] = None,
 ) -> RetrievalResult:
     """Development-facing retrieval inspection endpoint.
 
@@ -414,6 +416,11 @@ async def retrieve(
         )
 
     top_k, min_score = _resolve_retrieval_params(request.top_k, request.min_score)
+    translator = (
+        build_query_translator(client, settings.openai_chat_model)
+        if client is not None
+        else None
+    )
 
     try:
         return await retrieve_chunks(
@@ -423,6 +430,7 @@ async def retrieve(
             query=request.query,
             top_k=top_k,
             min_score=min_score,
+            translator=translator,
         )
     except DocumentEmbeddingError as exception:
         logger.exception(
