@@ -133,25 +133,30 @@
 }
 
 /* ---------------------------------------------------------------------- */
-/* Ingestion-failure toast                                                */
+/* Ingestion-failure popup                                                */
 /* ---------------------------------------------------------------------- */
 
-.toast {
+.toast-backdrop {
   position: fixed;
   z-index: 40;
-  right: 20px;
-  bottom: 20px;
-  left: 20px;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 55%);
+}
+
+.toast {
   display: flex;
   align-items: flex-start;
   gap: 12px;
   width: min(420px, 100%);
-  margin: 0 0 0 auto;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: 18px 20px;
   background: var(--surface-raised);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
+  box-shadow: 0 20px 48px rgb(0 0 0 / 40%);
 }
 
 .toast__icon {
@@ -470,6 +475,98 @@
 /* ---------------------------------------------------------------------- */
 /* Source panel                                                           */
 /* ---------------------------------------------------------------------- */
+
+.document-switcher {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  margin: 0 16px 14px;
+  padding-bottom: 2px;
+}
+
+.document-switcher__pill {
+  flex: 0 0 auto;
+  max-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  overflow: hidden;
+  color: var(--muted);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 550;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease;
+}
+
+.document-switcher__pill:hover {
+  color: var(--body);
+  border-color: var(--border-strong);
+}
+
+.document-switcher__pill[aria-selected='true'] {
+  color: var(--heading);
+  border-color: var(--accent-border);
+  background: var(--accent-wash);
+}
+
+.document-switcher__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.document-switcher__dot--ready {
+  background: var(--success);
+}
+
+.document-switcher__dot--failed {
+  background: var(--danger);
+}
+
+.document-switcher__dot--pending {
+  background: var(--warn);
+}
+
+.document-switcher__add {
+  flex: 0 0 auto;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.document-switcher__add:hover:not(:disabled) {
+  color: var(--accent-strong);
+  border-color: var(--accent-border);
+}
+
+.document-switcher__add:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
 
 .document-meta {
   flex: 0 0 auto;

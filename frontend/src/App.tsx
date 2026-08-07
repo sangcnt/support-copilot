@@ -19,7 +19,10 @@ import {
 } from './api'
 import './App.css'
 
-const UPWORK_URL = 'https://www.upwork.com/freelancers/~01a39c68ae5405aa7f'
+// Root domain of wherever this app is currently deployed (e.g.
+// https://sangcnt.online), not the /demo/support-copilot/ path - read at
+// runtime so it always follows the actual domain, even if that changes.
+const CONTACT_URL = window.location.origin
 
 type AppView = 'demo' | 'admin'
 type MobilePanel = 'source' | 'chat'
@@ -278,8 +281,86 @@ function DocumentTextView({
   )
 }
 
+function DocumentSwitcher({
+  documents,
+  activeDocumentId,
+  disabled,
+  onSelect,
+  onFileSelected,
+}: {
+  documents: DocumentRecord[]
+  activeDocumentId: string | null
+  disabled: boolean
+  onSelect: (document: DocumentRecord) => void
+  onFileSelected: (file: File) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  if (documents.length === 0) {
+    return null
+  }
+
+  return (
+    <div
+      className="document-switcher"
+      role="tablist"
+      aria-label="Your documents"
+    >
+      {documents.map((doc) => (
+        <button
+          key={doc.id}
+          type="button"
+          role="tab"
+          aria-selected={doc.id === activeDocumentId}
+          className="document-switcher__pill"
+          title={doc.display_name}
+          onClick={() => onSelect(doc)}
+        >
+          <span
+            className={
+              doc.status === 'ready'
+                ? 'document-switcher__dot document-switcher__dot--ready'
+                : doc.status === 'failed'
+                  ? 'document-switcher__dot document-switcher__dot--failed'
+                  : 'document-switcher__dot document-switcher__dot--pending'
+            }
+            aria-hidden="true"
+          />
+          {doc.display_name}
+        </button>
+      ))}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        className="visually-hidden"
+        disabled={disabled}
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+
+          if (file) {
+            onFileSelected(file)
+          }
+
+          event.target.value = ''
+        }}
+        aria-label="Upload another PDF"
+      />
+      <button
+        type="button"
+        className="document-switcher__add"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+      >
+        + Upload
+      </button>
+    </div>
+  )
+}
+
 function SourcePanel({
   document,
+  documents,
   initializing,
   uploading,
   uploadProgress,
@@ -293,9 +374,11 @@ function SourcePanel({
   chunksError,
   highlightedChunkId,
   onFileSelected,
+  onSelectDocument,
   onRemove,
 }: {
   document: DocumentRecord | null
+  documents: DocumentRecord[]
   initializing: boolean
   uploading: boolean
   uploadProgress: number | null
@@ -309,6 +392,7 @@ function SourcePanel({
   chunksError: string | null
   highlightedChunkId: string | null
   onFileSelected: (file: File) => void
+  onSelectDocument: (document: DocumentRecord) => void
   onRemove: () => void
 }) {
   if (document) {
@@ -337,6 +421,14 @@ function SourcePanel({
             </button>
           )}
         </header>
+
+        <DocumentSwitcher
+          documents={documents}
+          activeDocumentId={document.id}
+          disabled={initializing || uploading || ingesting}
+          onSelect={onSelectDocument}
+          onFileSelected={onFileSelected}
+        />
 
         <div className="document-meta">
           <span className="file-mark" aria-hidden="true">
@@ -429,6 +521,14 @@ function SourcePanel({
           </h2>
         </div>
       </header>
+
+      <DocumentSwitcher
+        documents={documents}
+        activeDocumentId={null}
+        disabled={initializing || uploading}
+        onSelect={onSelectDocument}
+        onFileSelected={onFileSelected}
+      />
 
       <div className="source-empty">
         <UploadPlaceholder
@@ -1153,6 +1253,7 @@ function ChatPanel({
 function PublicDemo() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('source')
   const [document, setDocument] = useState<DocumentRecord | null>(null)
+  const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [initializing, setInitializing] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
@@ -1220,12 +1321,13 @@ function PublicDemo() {
     const restoreSession = async () => {
       try {
         await startAnonymousSession()
-        const documents = await listDocuments()
+        const restoredDocuments = await listDocuments()
 
         if (active) {
+          setDocuments(restoredDocuments)
           setDocument(
-            documents.find((candidate) => !candidate.is_sample) ??
-              documents[0] ??
+            restoredDocuments.find((candidate) => !candidate.is_sample) ??
+              restoredDocuments[0] ??
               null,
           )
         }
@@ -1251,6 +1353,18 @@ function PublicDemo() {
     }
   }, [])
 
+  const upsertDocument = (updated: DocumentRecord) => {
+    setDocuments((previous) => {
+      const exists = previous.some((candidate) => candidate.id === updated.id)
+
+      return exists
+        ? previous.map((candidate) =>
+            candidate.id === updated.id ? updated : candidate,
+          )
+        : [updated, ...previous]
+    })
+  }
+
   const ingestDocument = async (target: DocumentRecord) => {
     setIngesting(true)
     setIngestionReceipt(null)
@@ -1262,6 +1376,7 @@ function PublicDemo() {
       const receipt = await startDocumentIngestion(target.id)
       setIngestionReceipt(receipt)
       setDocument(receipt.document)
+      upsertDocument(receipt.document)
     } catch (error) {
       setIngestionError(
         error instanceof Error
@@ -1294,10 +1409,12 @@ function PublicDemo() {
     setUploadProgress(0)
     setSourceView('pdf')
     setHighlightedChunkId(null)
+    setMobilePanel('source')
 
     try {
       const uploaded = await uploadDocument(file, setUploadProgress)
       setDocument(uploaded)
+      upsertDocument(uploaded)
       void ingestDocument(uploaded)
     } catch (error) {
       setDocumentError(
@@ -1322,7 +1439,11 @@ function PublicDemo() {
 
     try {
       await deleteDocument(document.id)
-      setDocument(null)
+      const remaining = documents.filter(
+        (candidate) => candidate.id !== document.id,
+      )
+      setDocuments(remaining)
+      setDocument(remaining[0] ?? null)
       setIngestionReceipt(null)
       setIngestionError(null)
       setIngestionErrorCode(null)
@@ -1337,6 +1458,22 @@ function PublicDemo() {
     }
   }
 
+  const handleSelectDocument = (target: DocumentRecord) => {
+    if (target.id === document?.id) {
+      return
+    }
+
+    setDocument(target)
+    setDocumentError(null)
+    setIngestionReceipt(null)
+    setIngestionError(null)
+    setIngestionErrorCode(null)
+    setIngestionToastDismissed(false)
+    setSourceView('pdf')
+    setHighlightedChunkId(null)
+    setMobilePanel('source')
+  }
+
   const handleViewSource = (chunkId: string) => {
     setSourceView('text')
     setMobilePanel('source')
@@ -1346,39 +1483,49 @@ function PublicDemo() {
   return (
     <>
       {ingestionErrorCode && !ingestionToastDismissed && (
-        <div className="toast toast--error" role="alert">
-          <span className="toast__icon" aria-hidden="true">
-            !
-          </span>
-          <div className="toast__body">
-            <strong>
-              {ingestionErrorCode === 'document_unprocessable'
-                ? "This document type isn't supported yet"
-                : "We couldn't process this PDF"}
-            </strong>
-            <p>
-              {ingestionErrorCode === 'document_unprocessable' ? (
-                <>
-                  This looks like a scanned PDF without selectable text - we
-                  don't support that yet. Have a use case for it?{' '}
-                  <a href={UPWORK_URL} target="_blank" rel="noreferrer">
-                    Reach out to Sang on Upwork
-                  </a>
-                  .
-                </>
-              ) : (
-                ingestionError
-              )}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="toast__dismiss"
-            aria-label="Dismiss"
-            onClick={() => setIngestionToastDismissed(true)}
+        <div
+          className="toast-backdrop"
+          onClick={() => setIngestionToastDismissed(true)}
+        >
+          <div
+            className="toast toast--error"
+            role="alertdialog"
+            aria-modal="true"
+            onClick={(event) => event.stopPropagation()}
           >
-            ×
-          </button>
+            <span className="toast__icon" aria-hidden="true">
+              !
+            </span>
+            <div className="toast__body">
+              <strong>
+                {ingestionErrorCode === 'document_unprocessable'
+                  ? "This document type isn't supported yet"
+                  : "We couldn't process this PDF"}
+              </strong>
+              <p>
+                {ingestionErrorCode === 'document_unprocessable' ? (
+                  <>
+                    This looks like a scanned PDF without selectable text - we
+                    don't support that yet. Have a use case for it?{' '}
+                    <a href={CONTACT_URL} target="_blank" rel="noreferrer">
+                      Reach out to Sang
+                    </a>
+                    .
+                  </>
+                ) : (
+                  ingestionError
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="toast__dismiss"
+              aria-label="Dismiss"
+              onClick={() => setIngestionToastDismissed(true)}
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
 
@@ -1419,6 +1566,7 @@ function PublicDemo() {
         >
           <SourcePanel
             document={document}
+            documents={documents}
             initializing={initializing}
             uploading={uploading}
             uploadProgress={uploadProgress}
@@ -1432,6 +1580,7 @@ function PublicDemo() {
             chunksError={chunksError}
             highlightedChunkId={highlightedChunkId}
             onFileSelected={(file) => void handleUpload(file)}
+            onSelectDocument={handleSelectDocument}
             onRemove={() => void handleRemove()}
           />
         </div>

@@ -282,6 +282,172 @@ describe('App', () => {
     })
   })
 
+  it('uploads a second PDF without removing the first, and switches between them', async () => {
+    const firstDocument = {
+      id: 'document-1',
+      display_name: 'policy.pdf',
+      source_type: 'upload',
+      status: 'ready',
+      failure_reason: null,
+      is_sample: false,
+      expires_at: null,
+      latest_version: {
+        id: 'version-1',
+        mime_type: 'application/pdf',
+        byte_size: 1024,
+        content_checksum: 'checksum-1',
+        ingestion_status: 'ready',
+        failure_code: null,
+        sample_questions: null,
+      },
+      created_at: '2026-08-01T00:00:00Z',
+    }
+    const secondDocumentPending = {
+      id: 'document-2',
+      display_name: 'handbook.pdf',
+      source_type: 'upload',
+      status: 'pending_ingestion',
+      failure_reason: null,
+      is_sample: false,
+      expires_at: '2026-08-07T00:00:00Z',
+      latest_version: {
+        id: 'version-2',
+        mime_type: 'application/pdf',
+        byte_size: 2048,
+        content_checksum: 'checksum-2',
+        ingestion_status: 'pending',
+        failure_code: null,
+        sample_questions: null,
+      },
+      created_at: '2026-08-07T00:00:00Z',
+    }
+    const secondDocumentReady = {
+      ...secondDocumentPending,
+      status: 'ready',
+      latest_version: {
+        ...secondDocumentPending.latest_version,
+        ingestion_status: 'ready',
+      },
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = String(input)
+
+      if (requestUrl.endsWith('api/public/session')) {
+        return jsonResponse({ data: { id: 'session-1' } })
+      }
+
+      if (requestUrl.endsWith('api/public/documents')) {
+        return jsonResponse({ data: [firstDocument] })
+      }
+
+      if (
+        requestUrl.endsWith('api/public/documents/document-2/ingestions') &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse(
+          {
+            data: {
+              status: 'received',
+              document_version_id: 'version-2',
+              file: {
+                filename: 'handbook.pdf',
+                content_type: 'application/pdf',
+                byte_size: 2048,
+                sha256: 'checksum-2',
+                checksum_matches: true,
+                pdf_signature: '%PDF-',
+              },
+              parser: {
+                parser_version: 'pdfplumber-0.11.10:v1',
+                page_count: 1,
+                character_count: 20,
+                line_count: 1,
+                empty_page_count: 0,
+                has_extractable_text: true,
+                metadata: {},
+                normalized_text: 'Employee handbook.',
+                pages: [],
+              },
+              chunking: {
+                chunker_version: 'line-token-v1',
+                tokenizer: 'cl100k_base',
+                min_tokens: 500,
+                target_tokens: 650,
+                max_tokens: 800,
+                overlap_tokens: 80,
+                chunk_count: 1,
+                checksum: 'chunking-checksum-2',
+                chunks: [],
+              },
+              embedding: {
+                provider: 'openai',
+                model: 'text-embedding-3-small',
+                batch_size: 32,
+                batch_count: 1,
+                embedding_count: 1,
+                dimensions: 1536,
+                input_tokens: 4,
+              },
+              document: secondDocumentReady,
+            },
+          },
+          202,
+        )
+      }
+
+      if (requestUrl.match(/api\/public\/documents\/document-\d\/messages$/)) {
+        return jsonResponse({ data: [] })
+      }
+
+      if (requestUrl.match(/api\/public\/documents\/document-\d\/chunks$/)) {
+        return jsonResponse({ data: [] })
+      }
+
+      if (requestUrl.endsWith('sanctum/csrf-cookie')) {
+        return jsonResponse(null, 204)
+      }
+
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    xhrResponder = (request) => {
+      request.status = 201
+      request.responseText = JSON.stringify({ data: secondDocumentPending })
+      request.onload?.()
+    }
+    render(<App />)
+
+    expect(
+      await screen.findByRole('heading', { name: 'policy.pdf' }),
+    ).toBeInTheDocument()
+
+    const uploadInput = await screen.findByLabelText('Upload another PDF')
+    const file = new File(['%PDF-1.4'], 'handbook.pdf', {
+      type: 'application/pdf',
+    })
+    fireEvent.change(uploadInput, { target: { files: [file] } })
+
+    expect(
+      await screen.findByRole('heading', { name: 'handbook.pdf' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'policy.pdf' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'handbook.pdf' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'policy.pdf' }))
+
+    expect(
+      await screen.findByRole('heading', { name: 'policy.pdf' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'policy.pdf' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+  })
+
   it('streams a grounded answer and shows a validated citation', async () => {
     const readyDocument = {
       id: 'document-1',
@@ -604,9 +770,9 @@ describe('App', () => {
     expect(
       await screen.findByText("This document type isn't supported yet"),
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole('link', { name: 'Reach out to Sang on Upwork' }),
-    ).toBeInTheDocument()
+    const contactLink = screen.getByRole('link', { name: 'Reach out to Sang' })
+    expect(contactLink).toBeInTheDocument()
+    expect(contactLink).toHaveAttribute('href', window.location.origin)
   })
 
   it('provides working admin navigation and empty product states', async () => {
