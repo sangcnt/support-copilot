@@ -112,13 +112,16 @@ function AppHeader({
 function UploadPlaceholder({
   compact = false,
   disabled = false,
+  progress = null,
   onFileSelected,
 }: {
   compact?: boolean
   disabled?: boolean
+  progress?: number | null
   onFileSelected: (file: File) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const uploading = progress !== null
 
   const selectFile = (files: FileList | null) => {
     const file = files?.[0]
@@ -166,13 +169,32 @@ function UploadPlaceholder({
             : 'Upload a document, then ask questions and inspect every citation.'}
         </p>
       </div>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-      >
-        {disabled ? 'Uploading…' : 'Choose PDF'}
-      </button>
+      {uploading ? (
+        <div
+          className="upload-progress"
+          role="progressbar"
+          aria-label="Upload progress"
+          aria-valuenow={progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="upload-progress__track">
+            <div
+              className="upload-progress__fill"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <span className="upload-progress__label">Uploading… {progress}%</span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+        >
+          Choose PDF
+        </button>
+      )}
       <small>PDF only · Maximum 10 MB</small>
     </div>
   )
@@ -182,6 +204,7 @@ function SourcePanel({
   document,
   initializing,
   uploading,
+  uploadProgress,
   ingesting,
   sourceChunked,
   error,
@@ -191,6 +214,7 @@ function SourcePanel({
   document: DocumentRecord | null
   initializing: boolean
   uploading: boolean
+  uploadProgress: number | null
   ingesting: boolean
   sourceChunked: boolean
   error: string | null
@@ -287,6 +311,7 @@ function SourcePanel({
       <div className="source-empty">
         <UploadPlaceholder
           disabled={initializing || uploading}
+          progress={uploadProgress}
           onFileSelected={onFileSelected}
         />
 
@@ -625,12 +650,14 @@ function ChatPanel({
             <span className="panel-header__label">Document assistant</span>
             <h2>Ask your PDF</h2>
           </div>
-          <span className="waiting-badge">
+          <span className={state === 'error' ? 'error-badge' : 'waiting-badge'}>
             {state === 'ingesting'
               ? 'Ingesting'
               : state === 'received'
                 ? 'Chunked'
-                : 'Awaiting ingestion'}
+                : state === 'error'
+                  ? 'Failed'
+                  : 'Awaiting ingestion'}
           </span>
         </header>
 
@@ -986,6 +1013,7 @@ function PublicDemo() {
   const [document, setDocument] = useState<DocumentRecord | null>(null)
   const [initializing, setInitializing] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [documentError, setDocumentError] = useState<string | null>(null)
   const [ingesting, setIngesting] = useState(false)
   const [ingestionReceipt, setIngestionReceipt] =
@@ -1066,11 +1094,11 @@ function PublicDemo() {
     }
 
     setUploading(true)
+    setUploadProgress(0)
 
     try {
-      const uploaded = await uploadDocument(file)
+      const uploaded = await uploadDocument(file, setUploadProgress)
       setDocument(uploaded)
-      setUploading(false)
       void ingestDocument(uploaded)
     } catch (error) {
       setDocumentError(
@@ -1078,6 +1106,7 @@ function PublicDemo() {
       )
     } finally {
       setUploading(false)
+      setUploadProgress(null)
     }
   }
 
@@ -1147,6 +1176,7 @@ function PublicDemo() {
             document={document}
             initializing={initializing}
             uploading={uploading}
+            uploadProgress={uploadProgress}
             ingesting={ingesting}
             sourceChunked={ingestionReceipt !== null}
             error={documentError}

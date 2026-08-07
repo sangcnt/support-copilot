@@ -44,10 +44,41 @@ const emptyDemoApi = () =>
     throw new Error(`Unexpected request: ${requestUrl}`)
   })
 
+// uploadDocument() uses XMLHttpRequest (not fetch) so it can report upload
+// progress. Tests that exercise the upload flow install a responder below.
+class FakeXMLHttpRequest {
+  method = ''
+  url = ''
+  status = 0
+  responseText = ''
+  withCredentials = false
+  upload: { onprogress: ((event: ProgressEvent) => void) | null } = {
+    onprogress: null,
+  }
+  onload: (() => void) | null = null
+  onerror: (() => void) | null = null
+
+  open(method: string, url: string) {
+    this.method = method
+    this.url = url
+  }
+
+  setRequestHeader() {}
+
+  send() {
+    queueMicrotask(() => xhrResponder(this))
+  }
+}
+
+let xhrResponder: (request: FakeXMLHttpRequest) => void = () => {
+  throw new Error('No XMLHttpRequest responder configured for this test')
+}
+
 describe('App', () => {
   beforeEach(() => {
     document.cookie = 'XSRF-TOKEN=test-csrf-token; path=/'
     vi.stubGlobal('fetch', emptyDemoApi())
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
   })
 
   afterEach(() => {
@@ -106,13 +137,6 @@ describe('App', () => {
       }
 
       if (
-        requestUrl.endsWith('api/public/documents') &&
-        init?.method === 'POST'
-      ) {
-        return jsonResponse({ data: uploadedDocument }, 201)
-      }
-
-      if (
         requestUrl.endsWith('api/public/documents/document-1/ingestions') &&
         init?.method === 'POST'
       ) {
@@ -134,6 +158,18 @@ describe('App', () => {
       throw new Error(`Unexpected request: ${requestUrl}`)
     })
     vi.stubGlobal('fetch', fetchMock)
+    const capturedUploadRequests: FakeXMLHttpRequest[] = []
+    xhrResponder = (request) => {
+      capturedUploadRequests.push(request)
+      request.status = 201
+      request.responseText = JSON.stringify({ data: uploadedDocument })
+      request.upload.onprogress?.({
+        lengthComputable: true,
+        loaded: 8,
+        total: 8,
+      } as ProgressEvent)
+      request.onload?.()
+    }
     render(<App />)
 
     const input = await screen.findByLabelText('Choose a PDF')
@@ -236,10 +272,9 @@ describe('App', () => {
     ).toBeInTheDocument()
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('api/public/documents'),
-        expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
-      )
+      expect(capturedUploadRequests).toHaveLength(1)
+      expect(capturedUploadRequests[0].method).toBe('POST')
+      expect(capturedUploadRequests[0].url).toContain('api/public/documents')
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('api/public/documents/document-1/ingestions'),
         expect.objectContaining({ method: 'POST' }),

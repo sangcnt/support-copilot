@@ -243,21 +243,63 @@ export async function listDocuments(): Promise<DocumentRecord[]> {
   return payload.data
 }
 
-export async function uploadDocument(file: File): Promise<DocumentRecord> {
+export async function uploadDocument(
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<DocumentRecord> {
   const headers = await csrfHeaders(true)
   const body = new FormData()
   body.append('file', file)
 
-  const payload = await jsonRequest<{ data: DocumentRecord }>(
-    'api/public/documents',
-    {
-      method: 'POST',
-      headers,
-      body,
-    },
-  )
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('POST', url('api/public/documents'))
+    request.withCredentials = true
+    request.setRequestHeader('Accept', 'application/json')
 
-  return payload.data
+    for (const [name, value] of Object.entries(headers)) {
+      request.setRequestHeader(name, value)
+    }
+
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100))
+      }
+    }
+
+    request.onload = () => {
+      let payload: { data?: DocumentRecord } & ErrorEnvelope = {}
+
+      try {
+        payload = JSON.parse(request.responseText) as typeof payload
+      } catch {
+        // Fall through to the generic error below.
+      }
+
+      if (request.status >= 200 && request.status < 300 && payload.data) {
+        resolve(payload.data)
+        return
+      }
+
+      const validationMessage = Object.values(
+        payload.error?.details ?? {},
+      )[0]?.[0]
+
+      reject(
+        new Error(
+          validationMessage ??
+            payload.error?.message ??
+            `The request failed with status ${request.status}.`,
+        ),
+      )
+    }
+
+    request.onerror = () => {
+      reject(new Error('The PDF upload failed.'))
+    }
+
+    request.send(body)
+  })
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
