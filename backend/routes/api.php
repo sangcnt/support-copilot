@@ -27,6 +27,8 @@ Route::prefix('public')->group(function (): void {
         ->middleware('document.access');
     Route::get('/documents/{document}/source', [PublicDocumentController::class, 'source'])
         ->middleware('document.access');
+    Route::get('/documents/{document}/chunks', [PublicDocumentController::class, 'chunks'])
+        ->middleware('document.access');
     Route::delete('/documents/{document}', [PublicDocumentController::class, 'destroy'])
         ->middleware(['anonymous.session', 'document.owner']);
     Route::post('/documents/{document}/ingestions', PublicDocumentIngestionController::class)

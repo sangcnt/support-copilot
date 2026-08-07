@@ -333,6 +333,20 @@ describe('App', () => {
         return jsonResponse({ data: [] })
       }
 
+      if (requestUrl.endsWith('api/public/documents/document-1/chunks')) {
+        return jsonResponse({
+          data: [
+            {
+              chunk_id: 'chunk-1',
+              ordinal: 0,
+              page_start: 1,
+              page_end: 1,
+              text: 'Refunds are available within 30 days.',
+            },
+          ],
+        })
+      }
+
       if (requestUrl.endsWith('sanctum/csrf-cookie')) {
         return jsonResponse(null, 204)
       }
@@ -365,8 +379,22 @@ describe('App', () => {
 
     fireEvent.click(screen.getByText('Source 1'))
     expect(
-      screen.getByText('Refunds are available within 30 days.'),
+      screen.getByText('Refunds are available within 30 days.', {
+        selector: '.citation-excerpt',
+      }),
     ).toBeInTheDocument()
+
+    // Clicking a citation also jumps the source panel to the Text view and
+    // highlights the passage it came from.
+    expect(screen.getByRole('tab', { name: 'Text' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    const highlighted = await screen.findByText(
+      'Refunds are available within 30 days.',
+      { selector: '.document-text-view__chunk--highlighted p' },
+    )
+    expect(highlighted).toBeInTheDocument()
   })
 
   it('restores conversation history on load', async () => {
@@ -444,6 +472,140 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText('Refunds are available within 30 days.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows document-specific sample questions when the document has them', async () => {
+    const readyDocument = {
+      id: 'document-1',
+      display_name: 'policy.pdf',
+      source_type: 'upload',
+      status: 'ready',
+      failure_reason: null,
+      is_sample: false,
+      expires_at: null,
+      latest_version: {
+        id: 'version-1',
+        mime_type: 'application/pdf',
+        byte_size: 1024,
+        content_checksum: 'checksum',
+        ingestion_status: 'ready',
+        failure_code: null,
+        sample_questions: ['How long is the return window?'],
+      },
+      created_at: '2026-08-01T00:00:00Z',
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const requestUrl = String(input)
+
+      if (requestUrl.endsWith('api/public/session')) {
+        return jsonResponse({ data: { id: 'session-1' } })
+      }
+
+      if (requestUrl.endsWith('api/public/documents')) {
+        return jsonResponse({ data: [readyDocument] })
+      }
+
+      if (requestUrl.endsWith('api/public/documents/document-1/messages')) {
+        return jsonResponse({ data: [] })
+      }
+
+      if (requestUrl.endsWith('api/public/documents/document-1/chunks')) {
+        return jsonResponse({ data: [] })
+      }
+
+      if (requestUrl.endsWith('sanctum/csrf-cookie')) {
+        return jsonResponse(null, 204)
+      }
+
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    expect(
+      await screen.findByText('How long is the return window?'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Summarize this document'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows a friendly, non-technical message when a PDF has no extractable text', async () => {
+    const uploadedDocument = {
+      id: 'document-1',
+      display_name: 'scanned.pdf',
+      source_type: 'upload',
+      status: 'pending_ingestion',
+      failure_reason: null,
+      is_sample: false,
+      expires_at: '2026-08-07T00:00:00Z',
+      latest_version: {
+        id: 'version-1',
+        mime_type: 'application/pdf',
+        byte_size: 1024,
+        content_checksum: 'checksum',
+        ingestion_status: 'pending',
+        failure_code: null,
+        sample_questions: null,
+      },
+      created_at: '2026-07-31T00:00:00Z',
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = String(input)
+
+      if (requestUrl.endsWith('api/public/session')) {
+        return jsonResponse({ data: { id: 'session-1' } })
+      }
+
+      if (
+        requestUrl.endsWith('api/public/documents/document-1/ingestions') &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse(
+          {
+            error: {
+              code: 'document_unprocessable',
+              message:
+                'This PDF does not contain extractable text that can be processed.',
+            },
+          },
+          422,
+        )
+      }
+
+      if (requestUrl.endsWith('api/public/documents')) {
+        return jsonResponse({ data: [] })
+      }
+
+      if (requestUrl.endsWith('sanctum/csrf-cookie')) {
+        return jsonResponse(null, 204)
+      }
+
+      throw new Error(`Unexpected request: ${requestUrl}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    xhrResponder = (request) => {
+      request.status = 201
+      request.responseText = JSON.stringify({ data: uploadedDocument })
+      request.onload?.()
+    }
+    render(<App />)
+
+    const input = await screen.findByLabelText('Choose a PDF')
+    const file = new File(['%PDF-1.4'], 'scanned.pdf', {
+      type: 'application/pdf',
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(
+      await screen.findByText("This document type isn't supported yet"),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: 'Reach out to Sang on Upwork' }),
     ).toBeInTheDocument()
   })
 

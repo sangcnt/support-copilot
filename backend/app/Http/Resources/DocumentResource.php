@@ -26,6 +26,8 @@ class DocumentResource extends JsonResource
                     'byte_size' => $this->latestVersion->byte_size,
                     'content_checksum' => $this->latestVersion->content_checksum,
                     'ingestion_status' => $this->latestVersion->ingestion_status,
+                    'failure_code' => $this->latestVersion->failure_code,
+                    'sample_questions' => $this->latestVersion->sample_questions,
                 ],
             ),
             'created_at' => $this->created_at->toIso8601String(),

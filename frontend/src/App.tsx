@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  ApiError,
   deleteDocument,
   documentSourceUrl,
+  listDocumentChunks,
   listDocuments,
   listMessages,
   sendChatMessage,
@@ -9,12 +11,15 @@ import {
   startDocumentIngestion,
   uploadDocument,
   type ChatStreamEvent,
+  type DocumentChunk,
   type DocumentRecord,
   type IngestionReceipt,
   type MessageCitation,
   type MessageRecord,
 } from './api'
 import './App.css'
+
+const UPWORK_URL = 'https://www.upwork.com/freelancers/~01a39c68ae5405aa7f'
 
 type AppView = 'demo' | 'admin'
 type MobilePanel = 'source' | 'chat'
@@ -28,7 +33,7 @@ function initialTheme(): Theme {
   return attribute === 'light' ? 'light' : 'dark'
 }
 
-const sampleQuestions = [
+const FALLBACK_SAMPLE_QUESTIONS = [
   'Summarize this document',
   'What are the key requirements?',
   'What does it say about refunds?',
@@ -200,6 +205,79 @@ function UploadPlaceholder({
   )
 }
 
+type SourceView = 'pdf' | 'text'
+
+function DocumentTextView({
+  chunks,
+  loading,
+  error,
+  highlightedChunkId,
+}: {
+  chunks: DocumentChunk[]
+  loading: boolean
+  error: string | null
+  highlightedChunkId: string | null
+}) {
+  const chunkRefs = useRef<Map<string, HTMLElement>>(new Map())
+
+  useEffect(() => {
+    const element = highlightedChunkId
+      ? chunkRefs.current.get(highlightedChunkId)
+      : null
+
+    if (element && typeof element.scrollIntoView === 'function') {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [highlightedChunkId])
+
+  if (loading) {
+    return <p className="document-text-view__status">Loading document text…</p>
+  }
+
+  if (error) {
+    return <p className="document-text-view__status">{error}</p>
+  }
+
+  if (chunks.length === 0) {
+    return (
+      <p className="document-text-view__status">
+        No extracted text is available yet.
+      </p>
+    )
+  }
+
+  return (
+    <div className="document-text-view">
+      {chunks.map((chunk) => (
+        <section
+          key={chunk.chunk_id}
+          ref={(element) => {
+            if (element) {
+              chunkRefs.current.set(chunk.chunk_id, element)
+            } else {
+              chunkRefs.current.delete(chunk.chunk_id)
+            }
+          }}
+          className={
+            highlightedChunkId === chunk.chunk_id
+              ? 'document-text-view__chunk document-text-view__chunk--highlighted'
+              : 'document-text-view__chunk'
+          }
+        >
+          {chunk.page_start !== null && (
+            <span className="document-text-view__page">
+              {chunk.page_start === chunk.page_end
+                ? `Page ${chunk.page_start}`
+                : `Pages ${chunk.page_start}–${chunk.page_end}`}
+            </span>
+          )}
+          <p>{chunk.text}</p>
+        </section>
+      ))}
+    </div>
+  )
+}
+
 function SourcePanel({
   document,
   initializing,
@@ -208,6 +286,12 @@ function SourcePanel({
   ingesting,
   sourceChunked,
   error,
+  sourceView,
+  onSourceViewChange,
+  chunks,
+  chunksLoading,
+  chunksError,
+  highlightedChunkId,
   onFileSelected,
   onRemove,
 }: {
@@ -218,6 +302,12 @@ function SourcePanel({
   ingesting: boolean
   sourceChunked: boolean
   error: string | null
+  sourceView: SourceView
+  onSourceViewChange: (view: SourceView) => void
+  chunks: DocumentChunk[]
+  chunksLoading: boolean
+  chunksError: string | null
+  highlightedChunkId: string | null
   onFileSelected: (file: File) => void
   onRemove: () => void
 }) {
@@ -284,11 +374,43 @@ function SourcePanel({
           </div>
         )}
 
+        <div
+          className="source-view-toggle"
+          role="tablist"
+          aria-label="Source view"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceView === 'pdf'}
+            onClick={() => onSourceViewChange('pdf')}
+          >
+            PDF
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceView === 'text'}
+            onClick={() => onSourceViewChange('text')}
+          >
+            Text
+          </button>
+        </div>
+
         <div className="source-preview">
-          <iframe
-            title={`Preview of ${document.display_name}`}
-            src={documentSourceUrl(document.id)}
-          />
+          {sourceView === 'pdf' ? (
+            <iframe
+              title={`Preview of ${document.display_name}`}
+              src={documentSourceUrl(document.id)}
+            />
+          ) : (
+            <DocumentTextView
+              chunks={chunks}
+              loading={chunksLoading}
+              error={chunksError}
+              highlightedChunkId={highlightedChunkId}
+            />
+          )}
         </div>
       </section>
     )
@@ -349,11 +471,13 @@ function CitationList({
   messageKey,
   expanded,
   onToggle,
+  onViewSource,
 }: {
   citations: MessageCitation[]
   messageKey: string
   expanded: string | null
   onToggle: (id: string | null) => void
+  onViewSource: (chunkId: string) => void
 }) {
   if (citations.length === 0) {
     return null
@@ -375,7 +499,10 @@ function CitationList({
               key={id}
               type="button"
               aria-expanded={isOpen}
-              onClick={() => onToggle(isOpen ? null : id)}
+              onClick={() => {
+                onToggle(isOpen ? null : id)
+                onViewSource(citation.chunk_id)
+              }}
             >
               <span aria-hidden="true">{citation.citation_order}</span>
               Source {citation.citation_order}
@@ -398,12 +525,14 @@ function ChatPanel({
   ingestionReceipt,
   ingestionError,
   onStartIngestion,
+  onViewSource,
 }: {
   document: DocumentRecord | null
   ingesting: boolean
   ingestionReceipt: IngestionReceipt | null
   ingestionError: string | null
   onStartIngestion: () => void
+  onViewSource: (chunkId: string) => void
 }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<MessageRecord[]>([])
@@ -414,9 +543,15 @@ function ChatPanel({
   const [expandedCitation, setExpandedCitation] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const pendingAnswerRef = useRef<PendingAnswer | null>(null)
+  const conversationRef = useRef<HTMLDivElement>(null)
 
   const documentId = document?.id
   const documentReady = document?.status === 'ready'
+  const sampleQuestions =
+    document?.latest_version?.sample_questions &&
+    document.latest_version.sample_questions.length > 0
+      ? document.latest_version.sample_questions
+      : FALLBACK_SAMPLE_QUESTIONS
 
   useEffect(() => {
     let active = true
@@ -454,6 +589,18 @@ function ChatPanel({
       abortRef.current?.abort()
     }
   }, [documentId])
+
+  useEffect(() => {
+    const container = conversationRef.current
+
+    if (pendingQuestion && container) {
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+      } else {
+        container.scrollTop = container.scrollHeight
+      }
+    }
+  }, [pendingQuestion])
 
   const updatePending = (patch: Partial<PendingAnswer>) => {
     pendingAnswerRef.current = pendingAnswerRef.current && {
@@ -830,7 +977,7 @@ function ChatPanel({
         <span className="ready-badge">Document ready</span>
       </header>
 
-      <div className="conversation" aria-live="polite">
+      <div className="conversation" aria-live="polite" ref={conversationRef}>
         <article className="message message--assistant">
           <div
             className="assistant-avatar assistant-avatar--small"
@@ -887,6 +1034,7 @@ function ChatPanel({
                 messageKey={message.id}
                 expanded={expandedCitation}
                 onToggle={setExpandedCitation}
+                onViewSource={onViewSource}
               />
               {message.role === 'assistant' && message.model && (
                 <div className="message__meta">
@@ -917,22 +1065,16 @@ function ChatPanel({
               C
             </div>
             <div className="message__content">
-              {pendingAnswer.content ? (
-                <p>{pendingAnswer.content}</p>
-              ) : (
-                <p className="pending-answer__status">
-                  {pendingAnswer.evidenceSufficient === false
-                    ? 'No matching passages found…'
-                    : pendingAnswer.evidenceSufficient === true
-                      ? `Found ${pendingAnswer.chunkCount ?? 0} relevant passages, writing an answer…`
-                      : 'Reading the document…'}
-                </p>
-              )}
+              <p>
+                {pendingAnswer.content}
+                <span className="streaming-cursor" aria-hidden="true" />
+              </p>
               <CitationList
                 citations={pendingAnswer.citations}
                 messageKey="pending"
                 expanded={expandedCitation}
                 onToggle={setExpandedCitation}
+                onViewSource={onViewSource}
               />
               <button
                 type="button"
@@ -1019,6 +1161,58 @@ function PublicDemo() {
   const [ingestionReceipt, setIngestionReceipt] =
     useState<IngestionReceipt | null>(null)
   const [ingestionError, setIngestionError] = useState<string | null>(null)
+  const [ingestionErrorCode, setIngestionErrorCode] = useState<string | null>(
+    null,
+  )
+  const [ingestionToastDismissed, setIngestionToastDismissed] = useState(false)
+  const [sourceView, setSourceView] = useState<SourceView>('pdf')
+  const [highlightedChunkId, setHighlightedChunkId] = useState<string | null>(
+    null,
+  )
+  const [documentChunks, setDocumentChunks] = useState<DocumentChunk[]>([])
+  const [chunksLoading, setChunksLoading] = useState(false)
+  const [chunksError, setChunksError] = useState<string | null>(null)
+
+  const documentId = document?.id
+  const documentReady = document?.status === 'ready'
+
+  useEffect(() => {
+    let active = true
+
+    if (!documentId || !documentReady) {
+      setDocumentChunks([])
+      setChunksError(null)
+      return
+    }
+
+    setChunksLoading(true)
+    setChunksError(null)
+
+    listDocumentChunks(documentId)
+      .then((chunks) => {
+        if (active) {
+          setDocumentChunks(chunks)
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setChunksError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to load the document text.',
+          )
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setChunksLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [documentId, documentReady])
 
   useEffect(() => {
     let active = true
@@ -1061,6 +1255,8 @@ function PublicDemo() {
     setIngesting(true)
     setIngestionReceipt(null)
     setIngestionError(null)
+    setIngestionErrorCode(null)
+    setIngestionToastDismissed(false)
 
     try {
       const receipt = await startDocumentIngestion(target.id)
@@ -1072,6 +1268,7 @@ function PublicDemo() {
           ? error.message
           : 'The AI service could not receive this PDF.',
       )
+      setIngestionErrorCode(error instanceof ApiError ? error.code : null)
     } finally {
       setIngesting(false)
     }
@@ -1095,6 +1292,8 @@ function PublicDemo() {
 
     setUploading(true)
     setUploadProgress(0)
+    setSourceView('pdf')
+    setHighlightedChunkId(null)
 
     try {
       const uploaded = await uploadDocument(file, setUploadProgress)
@@ -1126,6 +1325,9 @@ function PublicDemo() {
       setDocument(null)
       setIngestionReceipt(null)
       setIngestionError(null)
+      setIngestionErrorCode(null)
+      setSourceView('pdf')
+      setHighlightedChunkId(null)
     } catch (error) {
       setDocumentError(
         error instanceof Error ? error.message : 'Unable to remove the PDF.',
@@ -1135,8 +1337,51 @@ function PublicDemo() {
     }
   }
 
+  const handleViewSource = (chunkId: string) => {
+    setSourceView('text')
+    setMobilePanel('source')
+    setHighlightedChunkId(chunkId)
+  }
+
   return (
     <>
+      {ingestionErrorCode && !ingestionToastDismissed && (
+        <div className="toast toast--error" role="alert">
+          <span className="toast__icon" aria-hidden="true">
+            !
+          </span>
+          <div className="toast__body">
+            <strong>
+              {ingestionErrorCode === 'document_unprocessable'
+                ? "This document type isn't supported yet"
+                : "We couldn't process this PDF"}
+            </strong>
+            <p>
+              {ingestionErrorCode === 'document_unprocessable' ? (
+                <>
+                  This looks like a scanned PDF without selectable text - we
+                  don't support that yet. Have a use case for it?{' '}
+                  <a href={UPWORK_URL} target="_blank" rel="noreferrer">
+                    Reach out to Sang on Upwork
+                  </a>
+                  .
+                </>
+              ) : (
+                ingestionError
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="toast__dismiss"
+            aria-label="Dismiss"
+            onClick={() => setIngestionToastDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <div
         className="mobile-panel-tabs"
         role="tablist"
@@ -1180,6 +1425,12 @@ function PublicDemo() {
             ingesting={ingesting}
             sourceChunked={ingestionReceipt !== null}
             error={documentError}
+            sourceView={sourceView}
+            onSourceViewChange={setSourceView}
+            chunks={documentChunks}
+            chunksLoading={chunksLoading}
+            chunksError={chunksError}
+            highlightedChunkId={highlightedChunkId}
             onFileSelected={(file) => void handleUpload(file)}
             onRemove={() => void handleRemove()}
           />
@@ -1201,6 +1452,7 @@ function PublicDemo() {
                 void ingestDocument(document)
               }
             }}
+            onViewSource={handleViewSource}
           />
         </div>
       </main>

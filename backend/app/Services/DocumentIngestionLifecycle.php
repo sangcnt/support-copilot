@@ -89,6 +89,7 @@ class DocumentIngestionLifecycle
                 'embedding_model' => $this->stringValue($embedding, 'model'),
                 'embedding_dimensions' => $this->integerValue($embedding, 'dimensions'),
                 'embedding_input_tokens' => $this->integerValue($embedding, 'input_tokens'),
+                'sample_questions' => $this->listValue($receipt, 'sample_questions'),
                 'ingestion_status' => 'ready',
                 'failure_code' => null,
                 'failure_diagnostic' => null,

@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
+from types import SimpleNamespace
 
 from httpx import ASGITransport, AsyncClient
 
 from support_copilot_ai.document_embedder import ChunkEmbedding, EmbeddedDocument
-from support_copilot_ai.main import app, get_document_embedder
+from support_copilot_ai.main import app, get_answer_model_client, get_document_embedder
+from support_copilot_ai.sample_question_generator import SampleQuestions
 from tests.pdf_factory import build_text_pdf
 
 
@@ -38,6 +40,10 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
     async def send_pdf():
         transport = ASGITransport(app=app)
         app.dependency_overrides[get_document_embedder] = StubDocumentEmbedder
+        # Explicitly disable sample-question generation for this test: it
+        # only asserts on the core receipt shape, and the ambient
+        # environment may have a real OPENAI_API_KEY configured.
+        app.dependency_overrides[get_answer_model_client] = lambda: None
 
         try:
             async with AsyncClient(
@@ -54,6 +60,7 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
                 )
         finally:
             app.dependency_overrides.pop(get_document_embedder, None)
+            app.dependency_overrides.pop(get_answer_model_client, None)
 
     response = asyncio.run(send_pdf())
 
@@ -98,6 +105,59 @@ def test_ingestion_receives_pdf_and_returns_debug_receipt() -> None:
             "chunk_checksum": payload["chunking"]["chunks"][0]["checksum"],
             "vector": [0.1, 0.2, 0.3],
         }
+    ]
+    # No answer model client is configured in this test, so generation is
+    # skipped rather than failing the ingestion.
+    assert payload["sample_questions"] == []
+
+
+def test_ingestion_includes_generated_sample_questions_when_a_model_is_configured() -> (
+    None
+):
+    pdf = build_text_pdf(
+        ["Refund policy", "Customers may request a refund within 30 days."]
+    )
+
+    class StubResponses:
+        async def parse(self, **kwargs):
+            return SimpleNamespace(
+                output_parsed=SampleQuestions(
+                    questions=[
+                        "How many days do I have to request a refund?",
+                        "What is this document's refund policy?",
+                    ]
+                )
+            )
+
+    class StubAnswerClient:
+        def __init__(self) -> None:
+            self.responses = StubResponses()
+
+    async def send_pdf():
+        transport = ASGITransport(app=app)
+        app.dependency_overrides[get_document_embedder] = StubDocumentEmbedder
+        app.dependency_overrides[get_answer_model_client] = StubAnswerClient
+
+        try:
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                return await client.post(
+                    "/internal/ingestions",
+                    data={"document_version_id": "01K1EXAMPLEVERSION"},
+                    files={"file": ("policy.pdf", pdf, "application/pdf")},
+                )
+        finally:
+            app.dependency_overrides.pop(get_document_embedder, None)
+            app.dependency_overrides.pop(get_answer_model_client, None)
+
+    response = asyncio.run(send_pdf())
+
+    assert response.status_code == 202
+    assert response.json()["sample_questions"] == [
+        "How many days do I have to request a refund?",
+        "What is this document's refund policy?",
     ]
 
 

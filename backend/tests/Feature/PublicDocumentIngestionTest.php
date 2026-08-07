@@ -99,6 +99,7 @@ class PublicDocumentIngestionTest extends TestCase
                     'chunk_checksum' => str_repeat('d', 64),
                     'vector' => [0.1, 0.2, 0.3],
                 ]],
+                'sample_questions' => ['What is the refund window?'],
             ], 202),
         ]);
 
@@ -117,6 +118,10 @@ class PublicDocumentIngestionTest extends TestCase
             ->assertJsonPath('data.embedding.dimensions', 3)
             ->assertJsonPath('data.document.status', 'ready')
             ->assertJsonPath('data.document.latest_version.ingestion_status', 'ready')
+            ->assertJsonPath(
+                'data.document.latest_version.sample_questions.0',
+                'What is the refund window?',
+            )
             ->assertJsonMissingPath('data.embedding_records');
 
         $this->ownedRequest($token)

@@ -45,6 +45,7 @@ from support_copilot_ai.document_embedder import (
 )
 from support_copilot_ai.pdf_parser import ParsedDocument, PdfParser, PdfParsingError
 from support_copilot_ai.query_translator import build_query_translator
+from support_copilot_ai.sample_question_generator import generate_sample_questions
 
 
 class HealthResponse(BaseModel):
@@ -69,6 +70,7 @@ class IngestionReceipt(BaseModel):
     chunking: ChunkedDocument
     embedding: EmbeddingSummary
     embedding_records: list[ChunkEmbedding]
+    sample_questions: list[str]
 
 
 settings = get_settings()
@@ -220,6 +222,9 @@ async def receive_ingestion(
         ),
     ] = None,
     embedder: Annotated[DocumentEmbedder | None, Depends(get_document_embedder)] = None,
+    answer_client: Annotated[
+        AsyncOpenAI | None, Depends(get_answer_model_client)
+    ] = None,
 ) -> IngestionReceipt:
     """Receive, parse, chunk, and embed one PDF document version.
 
@@ -317,6 +322,15 @@ async def receive_ingestion(
     # receipt is returned. This service stays stateless and does not write
     # to any database itself.
 
+    sample_questions: list[str] = []
+
+    if answer_client is not None:
+        sample_questions = await generate_sample_questions(
+            client=answer_client,
+            chat_model=settings.openai_chat_model,
+            document_text=parsed_document.normalized_text,
+        )
+
     logger.info(
         "Received ingestion source document_version_id=%s filename=%r "
         "content_type=%s byte_size=%d sha256=%s checksum_matches=%s",
@@ -343,6 +357,7 @@ async def receive_ingestion(
         chunking=chunked_document,
         embedding=EmbeddingSummary.from_document(embedded_document),
         embedding_records=embedded_document.embeddings,
+        sample_questions=sample_questions,
     )
 
 

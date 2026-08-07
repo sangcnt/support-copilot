@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AnonymousSession;
+use App\Models\Chunk;
 use App\Models\Document;
 use App\Models\DocumentVersion;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -150,6 +151,57 @@ class PublicDocumentUploadTest extends TestCase
             'deleted_at' => null,
         ]);
         Storage::disk('documents')->assertExists($version->storage_key);
+    }
+
+    public function test_owner_can_read_the_ready_document_chunks_in_order(): void
+    {
+        [, $token] = $this->sessionContext('chunks-owner-token');
+        $documentId = $this->upload($token, $this->pdf('policy.pdf'))
+            ->assertCreated()
+            ->json('data.id');
+        $version = DocumentVersion::query()->firstOrFail();
+
+        $second = Chunk::query()->create([
+            'document_version_id' => $version->id,
+            'ordinal' => 1,
+            'page_number' => 2,
+            'page_end' => 2,
+            'normalized_text' => 'Second chunk text.',
+            'token_count' => 4,
+            'content_checksum' => str_repeat('b', 64),
+        ]);
+        $first = Chunk::query()->create([
+            'document_version_id' => $version->id,
+            'ordinal' => 0,
+            'page_number' => 1,
+            'page_end' => 1,
+            'normalized_text' => 'First chunk text.',
+            'token_count' => 4,
+            'content_checksum' => str_repeat('a', 64),
+        ]);
+
+        $this->ownedRequest($token)
+            ->getJson("/api/public/documents/{$documentId}/chunks")
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.chunk_id', $first->id)
+            ->assertJsonPath('data.0.text', 'First chunk text.')
+            ->assertJsonPath('data.0.page_start', 1)
+            ->assertJsonPath('data.1.chunk_id', $second->id)
+            ->assertJsonPath('data.1.text', 'Second chunk text.');
+    }
+
+    public function test_other_session_cannot_read_a_private_documents_chunks(): void
+    {
+        [, $ownerToken] = $this->sessionContext('chunks-private-owner-token');
+        $documentId = $this->upload($ownerToken, $this->pdf('private.pdf'))
+            ->assertCreated()
+            ->json('data.id');
+        [, $otherToken] = $this->sessionContext('chunks-different-session-token');
+
+        $this->ownedRequest($otherToken)
+            ->getJson("/api/public/documents/{$documentId}/chunks")
+            ->assertNotFound();
     }
 
     public function test_document_list_contains_only_session_documents_and_public_samples(): void

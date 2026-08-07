@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\UploadDocumentRequest;
+use App\Http\Resources\ChunkResource;
 use App\Http\Resources\DocumentResource;
 use App\Models\AnonymousSession;
 use App\Models\Document;
@@ -84,6 +85,15 @@ class PublicDocumentController extends Controller
         $response->headers->set('Cache-Control', 'private, no-store, max-age=0');
 
         return $response;
+    }
+
+    public function chunks(Document $document): AnonymousResourceCollection
+    {
+        $version = $document->latestVersion()->firstOrFail();
+
+        $chunks = $version->chunks()->orderBy('ordinal')->get();
+
+        return ChunkResource::collection($chunks);
     }
 
     public function destroy(

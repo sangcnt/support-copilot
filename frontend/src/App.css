@@ -133,6 +133,81 @@
 }
 
 /* ---------------------------------------------------------------------- */
+/* Ingestion-failure toast                                                */
+/* ---------------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  z-index: 40;
+  right: 20px;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: min(420px, 100%);
+  margin: 0 0 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
+}
+
+.toast__icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--surface-sunken);
+  background: var(--danger);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.toast__body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.toast__body strong {
+  display: block;
+  color: var(--heading);
+  font-size: 0.82rem;
+}
+
+.toast__body p {
+  margin: 4px 0 0;
+  color: var(--body);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.toast__body a {
+  color: var(--accent-strong);
+}
+
+.toast__dismiss {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast__dismiss:hover {
+  color: var(--heading);
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------------- */
 /* Workspace layout                                                       */
 /* ---------------------------------------------------------------------- */
 
@@ -488,6 +563,42 @@
   margin: 0 16px;
 }
 
+.source-view-toggle {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 0 16px 12px;
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  background: var(--surface-raised);
+}
+
+.source-view-toggle button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 570;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.source-view-toggle button:hover {
+  color: var(--body);
+}
+
+.source-view-toggle button[aria-selected='true'] {
+  color: var(--heading);
+  background: var(--surface);
+}
+
 .source-preview {
   min-height: 0;
   flex: 1 1 auto;
@@ -502,6 +613,54 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: #f4f4f2;
+}
+
+.document-text-view {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--surface-sunken);
+}
+
+.document-text-view__status {
+  margin: 40px auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.document-text-view__chunk {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  transition:
+    background 200ms ease,
+    border-color 200ms ease;
+}
+
+.document-text-view__chunk p {
+  margin: 4px 0 0;
+  color: var(--body);
+  font-size: 0.82rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.document-text-view__page {
+  color: var(--faint);
+  font-size: 0.66rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.document-text-view__chunk--highlighted {
+  border-color: var(--accent-border);
+  background: var(--accent-wash);
 }
 
 .citation-preview-note {
@@ -875,9 +1034,25 @@
   white-space: pre-wrap;
 }
 
-.pending-answer__status {
-  color: var(--muted);
-  font-style: italic;
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  background: currentColor;
+  vertical-align: text-bottom;
+  animation: streaming-cursor-blink 1s step-end infinite;
+}
+
+@keyframes streaming-cursor-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .stop-generating {

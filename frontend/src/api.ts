@@ -12,8 +12,18 @@ export type DocumentRecord = {
     byte_size: number
     content_checksum: string
     ingestion_status: string
+    failure_code: string | null
+    sample_questions: string[] | null
   } | null
   created_at: string
+}
+
+export type DocumentChunk = {
+  chunk_id: string
+  ordinal: number
+  page_start: number | null
+  page_end: number | null
+  text: string
 }
 
 export type IngestionReceipt = {
@@ -159,8 +169,25 @@ export type ChatStreamEvent =
 
 type ErrorEnvelope = {
   error?: {
+    code?: string
     message?: string
     details?: Record<string, string[]>
+  }
+}
+
+/**
+ * An API error that carries the backend's stable `error.code`, when present,
+ * alongside the human-readable message - so callers can distinguish "we
+ * don't support this yet" from "temporarily unavailable, try again" without
+ * string-matching the message text.
+ */
+export class ApiError extends Error {
+  code: string | null
+
+  constructor(message: string, code: string | null = null) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
   }
 }
 
@@ -170,7 +197,9 @@ const publicBase = import.meta.env.BASE_URL.endsWith('/')
 
 const url = (path: string) => `${publicBase}${path.replace(/^\//, '')}`
 
-async function errorMessage(response: Response): Promise<string> {
+async function errorDetails(
+  response: Response,
+): Promise<{ message: string; code: string | null }> {
   const fallback = `The request failed with status ${response.status}.`
 
   try {
@@ -179,9 +208,12 @@ async function errorMessage(response: Response): Promise<string> {
       payload.error?.details ?? {},
     )[0]?.[0]
 
-    return validationMessage ?? payload.error?.message ?? fallback
+    return {
+      message: validationMessage ?? payload.error?.message ?? fallback,
+      code: payload.error?.code ?? null,
+    }
   } catch {
-    return fallback
+    return { message: fallback, code: null }
   }
 }
 
@@ -196,7 +228,8 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    throw new Error(await errorMessage(response))
+    const { message, code } = await errorDetails(response)
+    throw new ApiError(message, code)
   }
 
   return (await response.json()) as T
@@ -286,16 +319,17 @@ export async function uploadDocument(
       )[0]?.[0]
 
       reject(
-        new Error(
+        new ApiError(
           validationMessage ??
             payload.error?.message ??
             `The request failed with status ${request.status}.`,
+          payload.error?.code ?? null,
         ),
       )
     }
 
     request.onerror = () => {
-      reject(new Error('The PDF upload failed.'))
+      reject(new ApiError('The PDF upload failed.'))
     }
 
     request.send(body)
@@ -328,6 +362,16 @@ export async function startDocumentIngestion(
 
 export function documentSourceUrl(documentId: string): string {
   return url(`api/public/documents/${documentId}/source`)
+}
+
+export async function listDocumentChunks(
+  documentId: string,
+): Promise<DocumentChunk[]> {
+  const payload = await jsonRequest<{ data: DocumentChunk[] }>(
+    `api/public/documents/${documentId}/chunks`,
+  )
+
+  return payload.data
 }
 
 export async function listMessages(
@@ -397,7 +441,8 @@ export async function sendChatMessage(
   )
 
   if (!response.ok || !response.body) {
-    throw new Error(await errorMessage(response))
+    const { message, code } = await errorDetails(response)
+    throw new ApiError(message, code)
   }
 
   const reader = response.body.getReader()
