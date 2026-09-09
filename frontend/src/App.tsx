@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ApiError,
   deleteDocument,
@@ -23,6 +24,32 @@ import './App.css'
 // https://sangcnt.online), not the /demo/support-copilot/ path - read at
 // runtime so it always follows the actual domain, even if that changes.
 const CONTACT_URL = window.location.origin
+
+function formatTimestamp(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatProcessingDuration(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+): string | null {
+  if (!startIso || !endIso) {
+    return null
+  }
+
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
+
+  if (!Number.isFinite(ms) || ms < 0) {
+    return null
+  }
+
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
 
 type AppView = 'demo' | 'admin'
 type MobilePanel = 'source' | 'chat'
@@ -281,54 +308,50 @@ function DocumentTextView({
   )
 }
 
-function DocumentSwitcher({
-  documents,
-  activeDocumentId,
+function DocumentSummary({ document }: { document: DocumentRecord }) {
+  const size = document.latest_version
+    ? `${(document.latest_version.byte_size / 1024 / 1024).toFixed(2)} MB`
+    : 'PDF'
+  const badgeClassName =
+    document.status === 'ready'
+      ? 'ready-badge'
+      : document.status === 'failed'
+        ? 'error-badge'
+        : 'waiting-badge'
+  const badgeLabel =
+    document.status === 'ready'
+      ? 'Ready'
+      : document.status === 'failed'
+        ? 'Failed'
+        : 'Processing'
+
+  return (
+    <>
+      <span className="file-mark" aria-hidden="true">
+        PDF
+      </span>
+      <div>
+        <strong>{document.display_name}</strong>
+        <span>{size} · Stored privately</span>
+      </div>
+      <span className={badgeClassName}>{badgeLabel}</span>
+    </>
+  )
+}
+
+function UploadButton({
   disabled,
-  onSelect,
   onFileSelected,
+  className,
 }: {
-  documents: DocumentRecord[]
-  activeDocumentId: string | null
   disabled: boolean
-  onSelect: (document: DocumentRecord) => void
   onFileSelected: (file: File) => void
+  className?: string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
-  if (documents.length === 0) {
-    return null
-  }
-
   return (
-    <div
-      className="document-switcher"
-      role="tablist"
-      aria-label="Your documents"
-    >
-      {documents.map((doc) => (
-        <button
-          key={doc.id}
-          type="button"
-          role="tab"
-          aria-selected={doc.id === activeDocumentId}
-          className="document-switcher__pill"
-          title={doc.display_name}
-          onClick={() => onSelect(doc)}
-        >
-          <span
-            className={
-              doc.status === 'ready'
-                ? 'document-switcher__dot document-switcher__dot--ready'
-                : doc.status === 'failed'
-                  ? 'document-switcher__dot document-switcher__dot--failed'
-                  : 'document-switcher__dot document-switcher__dot--pending'
-            }
-            aria-hidden="true"
-          />
-          {doc.display_name}
-        </button>
-      ))}
+    <>
       <input
         ref={inputRef}
         type="file"
@@ -348,13 +371,135 @@ function DocumentSwitcher({
       />
       <button
         type="button"
-        className="document-switcher__add"
+        className={className ? `source-upload ${className}` : 'source-upload'}
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
         + Upload
       </button>
-    </div>
+    </>
+  )
+}
+
+function DocumentMenu({
+  documents,
+  activeDocumentId,
+  disabled,
+  onSelect,
+  anchorRef,
+}: {
+  documents: DocumentRecord[]
+  activeDocumentId: string | null
+  disabled: boolean
+  onSelect: (document: DocumentRecord) => void
+  anchorRef: RefObject<HTMLElement | null>
+}) {
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState<{
+    top: number
+    left: number
+    width: number
+  } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+
+      if (
+        triggerRef.current?.contains(target) ||
+        panelRef.current?.contains(target)
+      ) {
+        return
+      }
+
+      setOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [open])
+
+  if (documents.length === 0) {
+    return null
+  }
+
+  const toggle = () => {
+    if (!open && anchorRef.current) {
+      const rect = anchorRef.current.getBoundingClientRect()
+      setPosition({ top: rect.bottom + 6, left: rect.left, width: rect.width })
+    }
+
+    setOpen((value) => !value)
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="document-menu__toggle"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label="Your documents"
+        disabled={disabled}
+        onClick={toggle}
+      >
+        <span aria-hidden="true">▾</span>
+      </button>
+
+      {open &&
+        position &&
+        createPortal(
+          <div
+            ref={panelRef}
+            className="document-menu__panel"
+            role="listbox"
+            aria-label="Your documents"
+            style={{
+              top: position.top,
+              left: position.left,
+              width: position.width,
+            }}
+          >
+            {documents.map((doc) => {
+              const duration = formatProcessingDuration(
+                doc.latest_version?.ingestion_started_at,
+                doc.latest_version?.ingestion_completed_at,
+              )
+              const statusLabel =
+                doc.status === 'ready'
+                  ? 'Ready'
+                  : doc.status === 'failed'
+                    ? 'Failed'
+                    : 'Processing'
+
+              return (
+                <button
+                  key={doc.id}
+                  type="button"
+                  role="option"
+                  aria-selected={doc.id === activeDocumentId}
+                  className="document-menu__item"
+                  title={`${formatTimestamp(doc.created_at)} · ${statusLabel}${duration ? ` in ${duration}` : ''}`}
+                  onClick={() => {
+                    onSelect(doc)
+                    setOpen(false)
+                  }}
+                >
+                  <DocumentSummary document={doc} />
+                </button>
+              )
+            })}
+          </div>,
+          window.document.body,
+        )}
+    </>
   )
 }
 
@@ -395,21 +540,49 @@ function SourcePanel({
   onSelectDocument: (document: DocumentRecord) => void
   onRemove: () => void
 }) {
+  const metaRef = useRef<HTMLDivElement>(null)
+  const emptyHeaderRef = useRef<HTMLElement>(null)
+
   if (document) {
     const size = document.latest_version
       ? `${(document.latest_version.byte_size / 1024 / 1024).toFixed(2)} MB`
       : 'PDF'
+    const badgeClassName =
+      !ingesting && document.status === 'ready'
+        ? 'ready-badge'
+        : !ingesting && document.status === 'failed'
+          ? 'error-badge'
+          : 'waiting-badge'
+    const badgeLabel = ingesting
+      ? 'Ingesting'
+      : document.status === 'ready'
+        ? 'Ready'
+        : document.status === 'failed'
+          ? 'Failed'
+          : sourceChunked
+            ? 'Chunked'
+            : 'Awaiting ingestion'
 
     return (
       <section
         className="workspace-panel source-panel"
         aria-label="Source document"
       >
-        <header className="panel-header">
+        <UploadButton
+          className="source-upload--full"
+          disabled={initializing || uploading || ingesting}
+          onFileSelected={onFileSelected}
+        />
+
+        <div className="document-meta" ref={metaRef}>
+          <span className="file-mark" aria-hidden="true">
+            PDF
+          </span>
           <div>
-            <span className="panel-header__label">Source document</span>
-            <h2>{document.display_name}</h2>
+            <strong>{document.display_name}</strong>
+            <span>{size} · Stored privately</span>
           </div>
+          <span className={badgeClassName}>{badgeLabel}</span>
           {!document.is_sample && (
             <button
               className="source-remove"
@@ -420,43 +593,13 @@ function SourcePanel({
               Remove
             </button>
           )}
-        </header>
-
-        <DocumentSwitcher
-          documents={documents}
-          activeDocumentId={document.id}
-          disabled={initializing || uploading || ingesting}
-          onSelect={onSelectDocument}
-          onFileSelected={onFileSelected}
-        />
-
-        <div className="document-meta">
-          <span className="file-mark" aria-hidden="true">
-            PDF
-          </span>
-          <div>
-            <strong>{document.display_name}</strong>
-            <span>{size} · Stored privately</span>
-          </div>
-          <span
-            className={
-              !ingesting && document.status === 'ready'
-                ? 'ready-badge'
-                : !ingesting && document.status === 'failed'
-                  ? 'error-badge'
-                  : 'waiting-badge'
-            }
-          >
-            {ingesting
-              ? 'Ingesting'
-              : document.status === 'ready'
-                ? 'Ready'
-                : document.status === 'failed'
-                  ? 'Failed'
-                  : sourceChunked
-                    ? 'Chunked'
-                    : 'Awaiting ingestion'}
-          </span>
+          <DocumentMenu
+            documents={documents}
+            activeDocumentId={document.id}
+            disabled={initializing || uploading || ingesting}
+            onSelect={onSelectDocument}
+            anchorRef={metaRef}
+          />
         </div>
 
         {error && (
@@ -513,22 +656,23 @@ function SourcePanel({
       className="workspace-panel source-panel"
       aria-label="Source document"
     >
-      <header className="panel-header">
+      <header className="panel-header" ref={emptyHeaderRef}>
         <div>
           <span className="panel-header__label">Source document</span>
           <h2>
             {initializing ? 'Restoring your session…' : 'No PDF selected'}
           </h2>
         </div>
+        <div className="panel-header__actions">
+          <DocumentMenu
+            documents={documents}
+            activeDocumentId={null}
+            disabled={initializing || uploading}
+            onSelect={onSelectDocument}
+            anchorRef={emptyHeaderRef}
+          />
+        </div>
       </header>
-
-      <DocumentSwitcher
-        documents={documents}
-        activeDocumentId={null}
-        disabled={initializing || uploading}
-        onSelect={onSelectDocument}
-        onFileSelected={onFileSelected}
-      />
 
       <div className="source-empty">
         <UploadPlaceholder

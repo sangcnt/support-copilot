@@ -28,6 +28,10 @@ class DocumentResource extends JsonResource
                     'ingestion_status' => $this->latestVersion->ingestion_status,
                     'failure_code' => $this->latestVersion->failure_code,
                     'sample_questions' => $this->latestVersion->sample_questions,
+                    'ingestion_started_at' => $this->latestVersion->ingestion_started_at
+                        ?->toIso8601String(),
+                    'ingestion_completed_at' => $this->latestVersion->ingestion_completed_at
+                        ?->toIso8601String(),
                 ],
             ),
             'created_at' => $this->created_at->toIso8601String(),

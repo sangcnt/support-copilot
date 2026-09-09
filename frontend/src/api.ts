@@ -14,6 +14,8 @@ export type DocumentRecord = {
     ingestion_status: string
     failure_code: string | null
     sample_questions: string[] | null
+    ingestion_started_at: string | null
+    ingestion_completed_at: string | null
   } | null
   created_at: string
 }

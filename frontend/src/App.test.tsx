@@ -418,9 +418,7 @@ describe('App', () => {
     }
     render(<App />)
 
-    expect(
-      await screen.findByRole('heading', { name: 'policy.pdf' }),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('policy.pdf')).toBeInTheDocument()
 
     const uploadInput = await screen.findByLabelText('Upload another PDF')
     const file = new File(['%PDF-1.4'], 'handbook.pdf', {
@@ -428,21 +426,22 @@ describe('App', () => {
     })
     fireEvent.change(uploadInput, { target: { files: [file] } })
 
-    expect(
-      await screen.findByRole('heading', { name: 'handbook.pdf' }),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'policy.pdf' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'handbook.pdf' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
+    expect(await screen.findByText('handbook.pdf')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: 'policy.pdf' }))
-
+    fireEvent.click(screen.getByRole('button', { name: 'Your documents' }))
     expect(
-      await screen.findByRole('heading', { name: 'policy.pdf' }),
+      screen.getByRole('option', { name: /policy\.pdf/ }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'policy.pdf' })).toHaveAttribute(
+    expect(
+      screen.getByRole('option', { name: /handbook\.pdf/ }),
+    ).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.click(screen.getByRole('option', { name: /policy\.pdf/ }))
+
+    expect(await screen.findByText('policy.pdf')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Your documents' }))
+    expect(screen.getByRole('option', { name: /policy\.pdf/ })).toHaveAttribute(
       'aria-selected',
       'true',
     )
