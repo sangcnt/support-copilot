@@ -18,13 +18,13 @@ x-backend-environment: &backend-environment
   QUEUE_CONNECTION: redis
   SESSION_DRIVER: redis
   SESSION_COOKIE: ${SESSION_COOKIE:-support_copilot_admin}
-  SESSION_PATH: ${SESSION_PATH:-/demo/support-copilot/}
+  SESSION_PATH: ${SESSION_PATH:-/}
   SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
   SESSION_SAME_SITE: ${SESSION_SAME_SITE:-lax}
   SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS:-sangcnt.online,127.0.0.1:5020,localhost}
   DEMO_SESSION_COOKIE: ${DEMO_SESSION_COOKIE:-support_copilot_demo}
   DEMO_SESSION_LIFETIME_DAYS: ${DEMO_SESSION_LIFETIME_DAYS:-7}
-  DEMO_SESSION_COOKIE_PATH: ${DEMO_SESSION_COOKIE_PATH:-/demo/support-copilot/}
+  DEMO_SESSION_COOKIE_PATH: ${DEMO_SESSION_COOKIE_PATH:-/}
   DEMO_SESSION_SECURE_COOKIE: ${DEMO_SESSION_SECURE_COOKIE:-false}
   DEMO_SESSION_SAME_SITE: ${DEMO_SESSION_SAME_SITE:-lax}
   ADMIN_NAME: ${ADMIN_NAME:-}
@@ -45,7 +45,7 @@ services:
       context: .
       dockerfile: infrastructure/nginx/Dockerfile
       args:
-        FRONTEND_PUBLIC_BASE: ${PUBLIC_BASE_PATH:-/demo/support-copilot/}
+        FRONTEND_PUBLIC_BASE: ${PUBLIC_BASE_PATH:-/}
     ports:
       - "127.0.0.1:${APP_PORT:-5020}:80"
     depends_on:

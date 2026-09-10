@@ -8,7 +8,7 @@ RUN npm ci
 
 COPY frontend/ ./
 
-ARG FRONTEND_PUBLIC_BASE=/demo/support-copilot/
+ARG FRONTEND_PUBLIC_BASE=/
 ENV VITE_PUBLIC_BASE=${FRONTEND_PUBLIC_BASE}
 
 RUN npm run build
